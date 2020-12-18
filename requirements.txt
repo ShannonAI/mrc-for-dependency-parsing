@@ -1,0 +1,4 @@
+torch>=1.7.0
+pytorch-lightning==1.0.8
+conllu==4.2.1
+allennlp==1.2.2

@@ -1,0 +1,22 @@
+# newdoc id = weblog-blogspot.com_zentelligence_20040423000200_ENG_20040423_000200
+# sent_id = weblog-blogspot.com_zentelligence_20040423000200_ENG_20040423_000200-0001
+# text = What if Google Morphed Into GoogleOS?
+1	What	what	PRON	WP	PronType=Int	0	root	0:root	_
+2	if	if	SCONJ	IN	_	4	mark	4:mark	_
+3	Google	Google	PROPN	NNP	Number=Sing	4	nsubj	4:nsubj	_
+4	Morphed	morph	VERB	VBD	Mood=Ind|Tense=Past|VerbForm=Fin	1	advcl	1:advcl:if	_
+5	Into	into	ADP	IN	_	6	case	6:case	_
+6	GoogleOS	GoogleOS	PROPN	NNP	Number=Sing	4	obl	4:obl:into	SpaceAfter=No
+7	?	?	PUNCT	.	_	4	punct	4:punct	_
+
+# sent_id = weblog-blogspot.com_zentelligence_20040423000200_ENG_20040423_000200-0003
+# text = [via Microsoft Watch from Mary Jo Foley ]
+1	[	[	PUNCT	-LRB-	_	4	punct	4:punct	SpaceAfter=No
+2	via	via	ADP	IN	_	4	case	4:case	_
+3	Microsoft	Microsoft	PROPN	NNP	Number=Sing	4	compound	4:compound	_
+4	Watch	Watch	PROPN	NNP	Number=Sing	0	root	0:root	_
+5	from	from	ADP	IN	_	6	case	6:case	_
+6	Mary	Mary	PROPN	NNP	Number=Sing	4	nmod	4:nmod:from	_
+7	Jo	Jo	PROPN	NNP	Number=Sing	6	flat	6:flat	_
+8	Foley	Foley	PROPN	NNP	Number=Sing	6	flat	6:flat	_
+9	]	]	PUNCT	-RRB-	_	4	punct	4:punct	_
