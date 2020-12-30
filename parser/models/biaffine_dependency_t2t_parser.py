@@ -1,18 +1,21 @@
-from typing import Dict,  Optional
-from copy import deepcopy
 import logging
-from transformers import BertModel, BertPreTrainedModel
-from transformers.modeling_bert import BertEncoder
-from overrides import overrides
+from copy import deepcopy
+from typing import Dict, Optional
+
 import torch
-from torch import nn
 import torch.nn.functional as F
-from allennlp.nn.util import get_range_vector
+from allennlp.modules import InputVariationalDropout
+from allennlp.modules.seq2seq_encoders.pytorch_seq2seq_wrapper import StackedBidirectionalLstmSeq2SeqEncoder
+from allennlp.nn import util as allennlp_util
 from allennlp.nn.util import (
     get_device_of,
-    masked_log_softmax,
 )
-from allennlp.nn import util as allennlp_util
+from allennlp.nn.util import get_range_vector
+from overrides import overrides
+from torch import nn
+from transformers import BertModel, BertPreTrainedModel
+from transformers.modeling_bert import BertEncoder
+
 from parser.models.mrc_biaffine_dependency_config import BertMrcDependencyConfig
 
 logger = logging.getLogger(__name__)
@@ -33,43 +36,60 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
 
         num_dep_labels = len(config.dep_tags)
         num_pos_labels = len(config.pos_tags)
-        hidden_size = config.hidden_size
+        hidden_size = config.additional_layer_dim
 
         if config.pos_dim > 0:
             self.pos_embedding = nn.Embedding(num_pos_labels, config.pos_dim)
-            self.fuse_layer = nn.Linear(config.pos_dim+hidden_size, hidden_size)
+            nn.init.xavier_uniform_(self.pos_embedding.weight)
+            if config.additional_layer_type != "lstm" and config.pos_dim+config.hidden_size != hidden_size:
+                self.fuse_layer = nn.Linear(config.pos_dim+config.hidden_size, hidden_size, bias=False)
+                nn.init.xavier_uniform_(self.fuse_layer.weight)
+            else:
+                self.fuse_layer = None
         else:
             self.pos_embedding = None
 
         self.bert = BertModel(config)
 
         if config.additional_layer > 0:
-            new_config = deepcopy(config)
-            new_config.hidden_size = hidden_size
-            new_config.num_hidden_layers = config.additional_layer
-            new_config.hidden_dropout_prob = new_config.attention_probs_dropout_prob = config.mrc_dropout
-            self.additional_encoder = BertEncoder(new_config)
+            if config.additional_layer_type == "transformer":
+                new_config = deepcopy(config)
+                new_config.hidden_size = hidden_size
+                new_config.num_hidden_layers = config.additional_layer
+                new_config.hidden_dropout_prob = new_config.attention_probs_dropout_prob = config.mrc_dropout
+                self.additional_encoder = BertEncoder(new_config)
+            else:
+                assert hidden_size % 2 == 0, "Bi-LSTM need an even hidden_size"
+                self.additional_encoder = StackedBidirectionalLstmSeq2SeqEncoder(
+                    input_size=config.pos_dim+config.hidden_size,
+                    hidden_size=hidden_size//2, num_layers=config.additional_layer,
+                    recurrent_dropout_probability=config.mrc_dropout, use_highway=True
+                )
+
         else:
             self.additional_encoder = None
 
         self.parent_feedforward = nn.Linear(hidden_size, 1)
         self.parent_tag_feedforward = nn.Linear(hidden_size, num_dep_labels)
 
-        self.mrc_dropout = nn.Dropout(config.mrc_dropout)
+        # self.mrc_dropout = nn.Dropout(config.mrc_dropout)
+        self._dropout = InputVariationalDropout(config.mrc_dropout)
 
-        self._init_weights(self.parent_feedforward)
-        self._init_weights(self.parent_tag_feedforward)
-        self._init_weights(self.additional_encoder)
+    # todo reinit
 
-    def _init_weights(self, module):
-        """ Initialize the weights. refer to BERT"""
-        if isinstance(module, (nn.Linear, nn.Embedding)):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-        if isinstance(module, nn.Linear) and module.bias is not None:
-            module.bias.data.zero_()
+    #     self._init_weights(self.parent_feedforward)
+    #     self._init_weights(self.parent_tag_feedforward)
+    #     self._init_weights(self.additional_encoder)
+    #
+    # def _init_weights(self, module):
+    #     """ Initialize the weights. refer to BERT"""
+    #     if isinstance(module, (nn.Linear, nn.Embedding)):
+    #         module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+    #     elif isinstance(module, nn.LayerNorm):
+    #         module.bias.data.zero_()
+    #         module.weight.data.fill_(1.0)
+    #     if isinstance(module, nn.Linear) and module.bias is not None:
+    #         module.bias.data.zero_()
 
     @overrides
     def forward(
@@ -88,22 +108,25 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
         embedded_text_input = self.get_word_embedding(
             token_ids=token_ids,
             offsets=offsets,
-            wordpiece_mask=wordpiece_mask.bool(),
+            wordpiece_mask=wordpiece_mask,
             type_ids=type_ids,
         )
         if self.pos_embedding is not None:
             embedded_pos_tags = self.pos_embedding(pos_tags)
             embedded_text_input = torch.cat([embedded_text_input, embedded_pos_tags], -1)
-            embedded_text_input = self.fuse_layer(embedded_text_input)
-        embedded_text_input = self.mrc_dropout(embedded_text_input)
+            if self.fuse_layer is not None:
+                embedded_text_input = self._dropout(self.fuse_layer(embedded_text_input))
 
         if self.additional_encoder is not None:
-            # todo add token-type ids
-            extended_attention_mask = self.bert.get_extended_attention_mask(word_mask,
-                                                                            word_mask.size(),
-                                                                            word_mask.device)
-            encoded_text = self.additional_encoder(hidden_states=embedded_text_input,
-                                                   attention_mask=extended_attention_mask)[0]
+            if self.config.additional_layer_type == "transformer":
+                extended_attention_mask = self.bert.get_extended_attention_mask(word_mask,
+                                                                                word_mask.size(),
+                                                                                word_mask.device)
+                encoded_text = self.additional_encoder(hidden_states=embedded_text_input,
+                                                       attention_mask=extended_attention_mask)[0]
+            else:
+                encoded_text = self.additional_encoder(inputs=embedded_text_input,
+                                                       mask=word_mask)
         else:
             encoded_text = embedded_text_input
 
@@ -173,6 +196,7 @@ if __name__ == '__main__':
         pos_tags=[f"pos_{i}" for i in range(5)],
         dep_tags=[f"dep_{i}" for i in range(5)],
         additional_layer=3,
+        additional_layer_dim=800,
         pos_dim=100,
         mrc_dropout=0.3,
         **bert_config.__dict__
@@ -181,7 +205,6 @@ if __name__ == '__main__':
         bert_path,
         config=bert_dep_config,
     )
-    print(mrc_dep)
     bsz = 2
     num_word_pieces = 128
     num_words = 100

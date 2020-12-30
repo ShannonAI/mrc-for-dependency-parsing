@@ -6,7 +6,7 @@
 @version: 1.0
 @file: trainer
 @time: 2020/12/17 20:13
-@desc:
+@desc: Trainer for biaf
 
 """
 
@@ -14,50 +14,53 @@ import os
 import argparse
 import pytorch_lightning as pl
 import torch
-from allennlp.nn.util import get_range_vector, get_device_of
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
 from transformers import BertConfig
 
-from parser.data.collate import collate_dependency_t2t_data
-from parser.data.dependency_t2t_reader import DependencyT2TDataset
+from parser.data.collate import collate_dependency_data
+from parser.data.dependency_reader import DependencyDataset
 from parser.metrics import *
 from parser.models import *
 from parser.callbacks import *
 from parser.utils.get_parser import get_parser
 
 
-class MrcDependency(pl.LightningModule):
+class BiafDependency(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
         self.args = args
         bert_config = BertConfig.from_pretrained(args.bert_dir)
-        self.model_config = BertMrcDependencyConfig(
+        self.model_config = BertDependencyConfig(
             pos_tags=args.pos_tags,
             dep_tags=args.dep_tags,
             pos_dim=args.pos_dim,
             additional_layer=args.additional_layer,
             additional_layer_type=args.additional_layer_type,
+            arc_representation_dim=args.arc_representation_dim,
+            tag_representation_dim=args.tag_representation_dim,
+            biaf_dropout=args.biaf_dropout,
             additional_layer_dim=args.additional_layer_dim,
-            mrc_dropout=args.mrc_dropout,
-
+            # todo lstm hidden size
             **bert_config.__dict__
         )
-        self.model = BiaffineDependencyT2TParser.from_pretrained(args.bert_dir, config=self.model_config)
+        self.model = BiaffineDependencyParser.from_pretrained(args.bert_dir, config=self.model_config)
 
         if args.freeze_bert:
             for param in self.model.bert.parameters():
                 param.requires_grad = False
 
-        self.train_stat = AttachmentScores(ignore_classes=args.ignore_pos_tags)  # todo ignore classes?
-        self.val_stat = AttachmentScores(ignore_classes=args.ignore_pos_tags) if not self.args.use_mst else AttachmentScores  # todo implement MST
+        self.train_stat = AttachmentScores(ignore_classes=args.ignore_pos_tags)
+        self.val_stat = AttachmentScores(ignore_classes=args.ignore_pos_tags)
         self.ignore_pos_tags = list(args.ignore_pos_tags)
 
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
         parser.add_argument("--pos_dim", type=int, default=0, help="pos tag dimension")
-        parser.add_argument("--mrc_dropout", type=float, default=0.0, help="mrc dropout")
+        parser.add_argument("--arc_representation_dim", type=int, default=500)
+        parser.add_argument("--tag_representation_dim", type=int, default=100)
+        parser.add_argument("--biaf_dropout", type=float, default=0.0, help="biaf dropout")
         parser.add_argument("--additional_layer", type=int, default=0, help="additional encoder layer")
         parser.add_argument("--additional_layer_dim", type=int, default=0, help="additional encoder layer dim")
         parser.add_argument("--additional_layer_type", type=str,
@@ -71,51 +74,32 @@ class MrcDependency(pl.LightningModule):
                             help="final div factor of linear decay scheduler")
         return parser
 
-    def forward(self, token_ids, type_ids, offsets, wordpiece_mask, span_idx, span_tag, pos_tags, word_mask, mrc_mask):
+    def forward(self, token_ids, type_ids, offsets, wordpiece_mask, dep_idxs, dep_tags, pos_tags, word_mask):
         return self.model(
-            token_ids, type_ids, offsets, wordpiece_mask, span_idx,
-            span_tag, pos_tags, word_mask, mrc_mask
+            token_ids, type_ids, offsets, wordpiece_mask, dep_idxs,
+            dep_tags, pos_tags, word_mask
         )
 
     def common_step(self, batch, phase="train"):
-        token_ids, type_ids, offsets, wordpiece_mask, span_idx, span_tag, pos_tags, word_mask, mrc_mask, meta_data = (
-            batch["token_ids"], batch["type_ids"], batch["offsets"], batch["wordpiece_mask"], batch["span_idx"],
-            batch["span_tag"], batch["pos_tags"], batch["word_mask"], batch["mrc_mask"], batch["meta_data"]
+        token_ids, type_ids, offsets, wordpiece_mask, dep_idxs, dep_tags, pos_tags, word_mask, meta_data = (
+            batch["token_ids"], batch["type_ids"], batch["offsets"], batch["wordpiece_mask"], batch["dp_idxs"],
+            batch["dp_tags"], batch["pos_tags"], batch["word_mask"], batch["meta_data"]
         )
-        parent_probs, parent_tag_probs, arc_nll, tag_nll = self(
-            token_ids, type_ids, offsets, wordpiece_mask, span_idx,
-            span_tag, pos_tags, word_mask, mrc_mask
+        predicted_heads, predicted_head_tags, arc_nll, tag_nll = self(
+            token_ids, type_ids, offsets, wordpiece_mask, dep_idxs,
+            dep_tags, pos_tags, word_mask
         )
         loss = arc_nll + tag_nll
         eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
 
-        if phase == "train" or not self.args.use_mst:
-            bsz = span_idx.size(0)
-            # [bsz]
-            batch_range_vector = get_range_vector(bsz, get_device_of(span_idx))
-            # [bsz]
-            gold_positions = span_idx[:, 0]
-            pred_positions = parent_probs.argmax(1)
-            metric_name = f"{phase}_stat"
-            metric = getattr(self, metric_name)
-            metric.update(
-                pred_positions.unsqueeze(-1),  # [bsz, 1]
-                parent_tag_probs[batch_range_vector, pred_positions].argmax(1).unsqueeze(-1),  # [bsz, 1]
-                gold_positions.unsqueeze(-1),  # [bsz, 1]
-                span_tag.unsqueeze(-1),  # [bsz, 1]
-                eval_mask[batch_range_vector, pred_positions].unsqueeze(-1)
-            )
-        else:
-            metric = self.val_stat
-            self.val_stat(
-                        [x["ann_idx"] for x in meta_data],
-                        [len(x["words"]) for x in meta_data],
-                        parent_probs,
-                        parent_tag_probs,
-                        span_idx,
-                        span_tag,
-                        # evaluation_mask,
-                    )
+        metric = getattr(self, f"{phase}_stat")
+        metric.update(
+            predicted_heads[:, 1:],  # ignore parent of root
+            predicted_head_tags[:, 1:],
+            dep_idxs,
+            dep_tags,
+            eval_mask,
+        )
 
         self.log(f'{phase}_loss', loss)
         return loss
@@ -154,7 +138,7 @@ class MrcDependency(pl.LightningModule):
                 "weight_decay": 0.0,
             },
         ]
-        # todo beta
+
         optimizer = torch.optim.Adam(optimizer_grouped_parameters, lr=self.args.lr, eps=1e-8)
 
         if self.args.scheduler == "plateau":
@@ -203,21 +187,20 @@ class MrcDependency(pl.LightningModule):
 
 def cli_main():
     pl.seed_everything(1234)
-
     # ------------
     # args
     # ------------
     parser = get_parser()
-    parser = MrcDependency.add_model_specific_args(parser)
+    parser = BiafDependency.add_model_specific_args(parser)
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
     # ------------
     # data
     # ------------
-
-    train_dataset = DependencyT2TDataset(
-        file_path=os.path.join(args.data_dir, f"dev.{args.data_format}"),
+    train_dataset = DependencyDataset(
+        file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
+        # file_path=os.path.join(args.data_dir, f"dev.{args.data_format}"),
         bert=args.bert_dir
     )
     train_loader = DataLoader(
@@ -226,9 +209,9 @@ def cli_main():
         shuffle=True,
         num_workers=args.workers,
         pin_memory=True,
-        collate_fn=collate_dependency_t2t_data
+        collate_fn=collate_dependency_data
     )
-    val_dataset = DependencyT2TDataset(
+    val_dataset = DependencyDataset(
         file_path=os.path.join(args.data_dir, f"dev.{args.data_format}"),
         bert=args.bert_dir
     )
@@ -238,7 +221,7 @@ def cli_main():
         shuffle=False,
         num_workers=args.workers,
         pin_memory=True,
-        collate_fn=collate_dependency_t2t_data
+        collate_fn=collate_dependency_data
     )
 
     args.pos_tags = train_dataset.pos_tags
@@ -250,12 +233,12 @@ def cli_main():
     # ------------
     # model
     # ------------
-    model = MrcDependency(args)
+    model = BiafDependency(args)
 
     # load pretrained_model
     if args.pretrained:
         model.load_state_dict(
-            torch.load(args.pretrained,map_location=torch.device('cpu'))["state_dict"]
+            torch.load(args.pretrained, map_location=torch.device('cpu'))["state_dict"]
         )
     # ------------
     # training
