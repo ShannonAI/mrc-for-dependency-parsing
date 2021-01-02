@@ -97,51 +97,15 @@ class BiaffineDependencyParser(BertPreTrainedModel):
         self.tag_bilinear.bias.data.zero_()
 
         self._dropout = InputVariationalDropout(config.biaf_dropout)
-        # todo: use [CLS] embedding instead of it
+        self._input_dropout = nn.Dropout(config.biaf_dropout)
+
         self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, hidden_size]))
-        # special init.
+        # special init. todo ablation study
         # tmp = torch.randn([hidden_size, hidden_size])
         # torch.nn.init.xavier_uniform_(tmp)
         # with torch.no_grad():
         #     self._head_sentinel.data[0][0] = tmp[0]
 
-        # nn.init.xavier_uniform_(self._head_sentinel.data)  fan_in == fan_out == hidden_size
-
-        initializer = InitializerApplicator.from_params(
-            Params({
-                "regexes": [
-                  [".*projection.*weight", {"type": "xavier_uniform"}],
-                  [".*projection.*bias", {"type": "zero"}],
-                  [".*tag_bilinear.*weight", {"type": "xavier_uniform"}],
-                  [".*tag_bilinear.*bias", {"type": "zero"}],
-                  [".*weight_ih.*", {"type": "xavier_uniform"}],
-                  [".*weight_hh.*", {"type": "orthogonal"}],
-                  [".*bias_ih.*", {"type": "zero"}],
-                  [".*bias_hh.*", {"type": "lstm_hidden_bias"}]
-                ]
-            })
-        )
-        initializer(self)  # todo warning显示并没有成功用上
-
-        # init weights  todo 探究为什么apply这个会影响收敛？
-        # for name, module in self.named_children():
-        #     # let these modules initialized by hugging_face/allennlp
-        #     if name == "bert" or name == "additional_encoder":
-        #         continue
-        #     module.apply(self._init_weights)
-            # initializer(module)
-
-    def _init_weights(self, module):
-        """ Initialize the weights"""
-        if isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-        elif isinstance(module, nn.LayerNorm):
-            module.bias.data.zero_()
-            module.weight.data.fill_(1.0)
-        elif isinstance(module, nn.Linear):
-            nn.init.xavier_uniform_(module.weight.data)
-            if module.bias is not None:
-                module.bias.data.zero_()
 
     @overrides
     def forward(
@@ -166,7 +130,9 @@ class BiaffineDependencyParser(BertPreTrainedModel):
             embedded_pos_tags = self.pos_embedding(pos_tags)
             embedded_text_input = torch.cat([embedded_text_input, embedded_pos_tags], -1)
             if self.fuse_layer is not None:
-                embedded_text_input = self._dropout(self.fuse_layer(embedded_text_input))
+                embedded_text_input = self.fuse_layer(embedded_text_input)
+        # todo compare normal dropout with InputVariationalDropout
+        embedded_text_input = self._input_dropout(embedded_text_input)
 
         if self.additional_encoder is not None:
             if self.config.additional_layer_type == "transformer":
@@ -189,6 +155,8 @@ class BiaffineDependencyParser(BertPreTrainedModel):
         dep_idxs = torch.cat([dep_idxs.new_zeros(batch_size, 1), dep_idxs], 1)
         dep_tags = torch.cat([dep_tags.new_zeros(batch_size, 1), dep_tags], 1)
 
+        encoded_text = self._dropout(encoded_text)
+
         # shape (batch_size, sequence_length, arc_representation_dim)
         head_arc_representation = self._dropout(self.head_arc_feedforward(encoded_text))
         child_arc_representation = self._dropout(self.child_arc_feedforward(encoded_text))
@@ -199,7 +167,7 @@ class BiaffineDependencyParser(BertPreTrainedModel):
         # shape (batch_size, sequence_length, sequence_length)
         attended_arcs = self.arc_attention(head_arc_representation, child_arc_representation)
 
-        minus_inf = -1e4
+        minus_inf = -1e8
         minus_mask = ~word_mask * minus_inf
         attended_arcs = attended_arcs + minus_mask.unsqueeze(2) + minus_mask.unsqueeze(1)
 
@@ -550,10 +518,9 @@ class BiaffineDependencyParser(BertPreTrainedModel):
 
 if __name__ == '__main__':
     from transformers import BertConfig
-    bert_path = "/data/nfsdata2/nlp_application/models/bert/bert-large-cased"
+    bert_path = "/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking"
     bert_config = BertConfig.from_pretrained(bert_path)
     bert_dep_config = BertDependencyConfig(
-        # "/data/nfsdata2/nlp_application/models/bert/bert-large-cased",
         pos_tags=[f"pos_{i}" for i in range(5)],
         dep_tags=[f"dep_{i}" for i in range(5)],
         additional_layer=3,
@@ -565,11 +532,11 @@ if __name__ == '__main__':
         tag_representation_dim=100,
         **bert_config.__dict__
     )
-    mrc_dep = BiaffineDependencyParser.from_pretrained(
+    parser = BiaffineDependencyParser.from_pretrained(
         bert_path,
         config=bert_dep_config,
     )
-    print(mrc_dep)
+    print(parser)
     bsz = 2
     num_word_pieces = 128
     num_words = 100
@@ -579,7 +546,7 @@ if __name__ == '__main__':
     offsets = torch.ones([bsz, num_words, 2], dtype=torch.long)
     dep_idxs = dep_tags = pos_tags = torch.ones([bsz, num_words], dtype=torch.long)
     mrc_mask = word_mask = pos_tags.bool()
-    y = mrc_dep(
+    y = parser(
         token_ids,
         type_ids,
         offsets,

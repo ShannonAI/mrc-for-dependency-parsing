@@ -74,11 +74,6 @@ class AttachmentScores(Metric):
         if mask is None:
             mask = torch.ones_like(predicted_indices).bool()
 
-        predicted_indices = predicted_indices.long()
-        predicted_labels = predicted_labels.long()
-        gold_indices = gold_indices.long()
-        gold_labels = gold_labels.long()
-
         # Multiply by a mask denoting locations of
         # gold labels which we should ignore.
         for label in self._ignore_classes:
@@ -91,7 +86,7 @@ class AttachmentScores(Metric):
         correct_labels_and_indices = correct_indices * correct_labels
         # labeled_exact_match = (correct_labels_and_indices + ~mask).prod(dim=-1)
         # total_sentences = correct_indices.size(0)
-        total_words = correct_indices.numel() - (~mask).sum()
+        total_words = mask.sum()
 
         self.unlabeled_correct += correct_indices.sum()
         # self.exact_unlabeled_correct += unlabeled_exact_match.sum()

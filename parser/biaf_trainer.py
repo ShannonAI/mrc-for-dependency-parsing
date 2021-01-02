@@ -16,32 +16,41 @@ import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
-from transformers import BertConfig
-
+from transformers import BertConfig, AdamW
+from collections import namedtuple
 from parser.data.collate import collate_dependency_data
 from parser.data.dependency_reader import DependencyDataset
 from parser.metrics import *
 from parser.models import *
 from parser.callbacks import *
 from parser.utils.get_parser import get_parser
+from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler
+from parser.data.samplers.grouped_sampler import GroupedSampler
 
 
 class BiafDependency(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
-        self.args = args
+
+        if isinstance(args, argparse.Namespace):
+            self.save_hyperparameters(args)
+            self.args = args
+        else:
+            # eval mode
+            TmpArgs = namedtuple("tmp_args", field_names=list(args.keys()))
+            self.args = args = TmpArgs(**args)
+
         bert_config = BertConfig.from_pretrained(args.bert_dir)
         self.model_config = BertDependencyConfig(
             pos_tags=args.pos_tags,
             dep_tags=args.dep_tags,
             pos_dim=args.pos_dim,
             additional_layer=args.additional_layer,
+            additional_layer_dim=args.additional_layer_dim,
             additional_layer_type=args.additional_layer_type,
             arc_representation_dim=args.arc_representation_dim,
             tag_representation_dim=args.tag_representation_dim,
             biaf_dropout=args.biaf_dropout,
-            additional_layer_dim=args.additional_layer_dim,
-            # todo lstm hidden size
             **bert_config.__dict__
         )
         self.model = BiaffineDependencyParser.from_pretrained(args.bert_dir, config=self.model_config)
@@ -50,8 +59,9 @@ class BiafDependency(pl.LightningModule):
             for param in self.model.bert.parameters():
                 param.requires_grad = False
 
-        self.train_stat = AttachmentScores(ignore_classes=args.ignore_pos_tags)
-        self.val_stat = AttachmentScores(ignore_classes=args.ignore_pos_tags)
+        self.train_stat = AttachmentScores()
+        self.val_stat = AttachmentScores()
+        self.test_stat = AttachmentScores()
         self.ignore_pos_tags = list(args.ignore_pos_tags)
 
     @staticmethod
@@ -68,6 +78,8 @@ class BiafDependency(pl.LightningModule):
                             help="additional layer type")
         parser.add_argument("--ignore_punct", action="store_true", help="ignore punct pos when evaluating")
         parser.add_argument("--freeze_bert", action="store_true", help="freeze bert embedding")
+        parser.add_argument("--group_sample", action="store_true",
+                            help="use group sampler, which could accelerate training")
         parser.add_argument("--scheduler", default="plateau", choices=["plateau", "linear_decay"],
                             help="scheduler type")
         parser.add_argument("--final_div_factor", type=float, default=1e4,
@@ -110,6 +122,9 @@ class BiafDependency(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         return self.common_step(batch, phase="val")
 
+    def test_step(self, batch, batch_idx):
+        return self.common_step(batch, phase="test")
+
     def log_on_epoch_end(self, phase="train"):
         metric_name = f"{phase}_stat"
         metric = getattr(self, metric_name)
@@ -117,11 +132,14 @@ class BiafDependency(pl.LightningModule):
         for sub_metric, metric_value in metrics.items():
             self.log(f"{phase}_{sub_metric}", metric_value)
 
+    def training_epoch_end(self, outputs):
+        self.log_on_epoch_end("train")
+
     def validation_epoch_end(self, outputs):
         self.log_on_epoch_end("val")
 
-    def training_epoch_end(self, outputs):
-        self.log_on_epoch_end("train")
+    def test_epoch_end(self, outputs):
+        self.log_on_epoch_end("test")
 
     def configure_optimizers(self):
         no_decay = ["bias", "LayerNorm.weight"]
@@ -139,7 +157,9 @@ class BiafDependency(pl.LightningModule):
             },
         ]
 
-        optimizer = torch.optim.Adam(optimizer_grouped_parameters, lr=self.args.lr, eps=1e-8)
+        # todo add betas to arguments and tune it
+        optimizer = AdamW(optimizer_grouped_parameters, lr=self.args.lr, eps=1e-8,
+                          betas=(0.9, 0.9))
 
         if self.args.scheduler == "plateau":
             lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", patience=2, factor=0.85,
@@ -185,7 +205,7 @@ class BiafDependency(pl.LightningModule):
         return new_mask
 
 
-def cli_main():
+def main():
     pl.seed_everything(1234)
     # ------------
     # args
@@ -195,41 +215,52 @@ def cli_main():
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
+    args.num_gpus = len([x for x in str(args.gpus).split(",") if x.strip()]) if "," in args.gpus else int(args.gpus)
+
     # ------------
     # data
     # ------------
-    train_dataset = DependencyDataset(
-        file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
-        # file_path=os.path.join(args.data_dir, f"dev.{args.data_format}"),
-        bert=args.bert_dir
-    )
-    train_loader = DataLoader(
-        dataset=train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.workers,
-        pin_memory=True,
-        collate_fn=collate_dependency_data
-    )
-    val_dataset = DependencyDataset(
-        file_path=os.path.join(args.data_dir, f"dev.{args.data_format}"),
-        bert=args.bert_dir
-    )
-    val_loader = DataLoader(
-        dataset=val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.workers,
-        pin_memory=True,
-        collate_fn=collate_dependency_data
-    )
 
-    args.pos_tags = train_dataset.pos_tags
-    args.dep_tags = train_dataset.dep_tags
-    args.ignore_pos_tags = train_dataset.ignore_pos_tags if args.ignore_punct else set()
+    def get_dataloader(args, split="train", shuffle=True):
+        dataset = DependencyDataset(file_path=os.path.join(args.data_dir, f"{split}.{args.data_format}"),
+                                    pos_tags=getattr(args, "pos_tags", None),
+                                    dep_tags=getattr(args, "dep_tags", None),
+                                    bert=args.bert_dir)
+        if args.num_gpus <= 1:
+            sampler = RandomSampler(dataset) if shuffle else SequentialSampler(dataset)
+        else:
+            sampler = DistributedSampler(dataset, shuffle=shuffle)
+        if args.group_sample:
+            groups, counts = dataset.get_groups()
+            sampler = GroupedSampler(
+                dataset=dataset,
+                sampler=sampler,
+                group_ids=groups,
+                batch_size=args.batch_size,
+                counts=counts
+            )
 
-    num_gpus = len([x for x in str(args.gpus).split(",") if x.strip()]) if "," in args.gpus else int(args.gpus)
-    args.t_total = (len(train_loader) // (args.accumulate_grad_batches * num_gpus) + 1) * args.max_epochs
+        loader = DataLoader(
+            dataset=dataset,
+            sampler=sampler,
+            batch_size=args.batch_size,
+            num_workers=args.workers,
+            pin_memory=True,
+            collate_fn=collate_dependency_data
+        )
+
+        return loader
+
+    train_loader = get_dataloader(args, "train", shuffle=True)
+
+    args.pos_tags = train_loader.dataset.pos_tags
+    args.dep_tags = train_loader.dataset.dep_tags
+    args.ignore_pos_tags = train_loader.dataset.ignore_pos_tags if args.ignore_punct else set()
+
+    val_loader = get_dataloader(args, "dev", shuffle=False)
+
+    args.t_total = (len(train_loader) // (args.accumulate_grad_batches * args.num_gpus) + 1) * args.max_epochs
+
     # ------------
     # model
     # ------------
@@ -240,10 +271,8 @@ def cli_main():
         model.load_state_dict(
             torch.load(args.pretrained, map_location=torch.device('cpu'))["state_dict"]
         )
-    # ------------
-    # training
-    # ------------
-    # checkpoint
+
+    # call backs
     checkpoint_callback = ModelCheckpoint(
         monitor='val_UAS',
         dirpath=args.default_root_dir,
@@ -252,14 +281,16 @@ def cli_main():
         mode='max',
         verbose=True
     )
+
     lr_monitor = LearningRateMonitor(logging_interval='step')
     print_model = ModelPrintCallback(print_modules=["model"])
     callbacks = [checkpoint_callback, lr_monitor, print_model]
     if args.freeze_bert:
         callbacks.append(EvalCallback(["model.bert"]))
-    trainer = pl.Trainer.from_argparse_args(args, callbacks=callbacks)
+
+    trainer = pl.Trainer.from_argparse_args(args, callbacks=callbacks, replace_sampler_ddp=False)
     trainer.fit(model, train_loader, val_loader)
 
 
 if __name__ == '__main__':
-    cli_main()
+    main()

@@ -11,17 +11,20 @@
 """
 
 
-import logging
+from functools import lru_cache
 from itertools import chain
-from copy import deepcopy
 from typing import List, Iterable
+
+import numpy as np
 import torch
 from allennlp.data.token_indexers import PretrainedTransformerIndexer
 from conllu import parse_incr
 from torch.utils.data import Dataset
-from functools import lru_cache
 
-logger = logging.getLogger(__name__)
+from parser.data.samplers.grouped_sampler import create_lengths_groups
+from parser.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class DependencyDataset(Dataset):
@@ -44,6 +47,8 @@ class DependencyDataset(Dataset):
         file_path: str,
         bert: str,
         use_language_specific_pos: bool = False,
+        pos_tags: List[str] = None,
+        dep_tags: List[str] = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -51,6 +56,7 @@ class DependencyDataset(Dataset):
         self.file_path = file_path
         self.data = []  # list of (words, pos_tags, dp_tags, dp_heads)
         with open(file_path, "r") as conllu_file:
+            logger.info(f"Reading sentences from conllu dataset at: {file_path} ...")
             for ann_idx, annotation in enumerate(parse_incr(conllu_file)):
                 annotation = [x for x in annotation if isinstance(x["id"], int)]
 
@@ -58,15 +64,17 @@ class DependencyDataset(Dataset):
                 dp_tags = [x["deprel"] for x in annotation]
                 words = [x["form"] for x in annotation]
                 if self.use_language_specific_pos:
-                    pos_tags = [x["xpostag"] for x in annotation]
+                    sample_pos_tags = [x["xpostag"] for x in annotation]
                 else:
-                    pos_tags = [x["upostag"] for x in annotation]
-                self.data.append((words, pos_tags, dp_tags, dp_heads))
+                    sample_pos_tags = [x["upostag"] for x in annotation]
+                self.data.append((words, sample_pos_tags, dp_tags, dp_heads))
 
             logger.info(f"Read {len(self.data)} sentences from conllu dataset at: %s", file_path)
 
-        self.pos_tags, self.pos_tag_2idx = self.build_label_vocab(chain(*[d[1] for d in self.data]))
-        self.dep_tags, self.dep_tag_2idx = self.build_label_vocab(chain(*[d[2] for d in self.data]))
+        self.pos_tags = pos_tags or self.build_label_vocab(chain(*[d[1] for d in self.data]))
+        self.pos_tag_2idx = {l: idx for idx, l in enumerate(self.pos_tags)}
+        self.dep_tags = dep_tags or self.build_label_vocab(chain(*[d[2] for d in self.data]))
+        self.dep_tag_2idx = {l: idx for idx, l in enumerate(self.dep_tags)}
         logger.info(f"pos tags: {self.pos_tag_2idx}")
         logger.info(f"dep tags: {self.dep_tag_2idx}")
 
@@ -79,8 +87,8 @@ class DependencyDataset(Dataset):
         labels_set = set()
         for l in labels:
             labels_set.add(l)
-        label_list = list(labels_set)
-        return label_list, {l: idx for idx, l in enumerate(label_list)}
+        label_list = sorted(list(labels_set))
+        return label_list
 
     @property
     def ignore_pos_tags(self):
@@ -111,7 +119,7 @@ class DependencyDataset(Dataset):
         fields = {
             "type_ids": torch.LongTensor([0] * len(words)),
             "word_mask": torch.LongTensor([1] * len(words)),
-                  }
+        }
 
         bert_mismatch_fields = self.get_mismatch_token_idx(words)
         fields.update(bert_mismatch_fields)
@@ -149,27 +157,50 @@ class DependencyDataset(Dataset):
         }
         return output
 
+    def get_groups(self, max_length=128, cache=True):
+        """ge groups, used for GroupSampler"""
+        if cache:
+            group_save_path = self.file_path + "groups.npy"
+            counts_save_path = self.file_path + "groups_counts.npy"
+            try:
+                logger.info("Loading pre-computed groups")
+                counts = np.load(counts_save_path)
+                groups = np.load(group_save_path)
+                assert len(groups) == len(self)
+            except Exception as e:
+                logger.error(f"Loading pre-computed groups from {group_save_path} failed", exc_info=1)
+                logger.info("Re-computing groups")
+                groups, counts = create_lengths_groups(lengths=[len(x[0]) for x in self.data],
+                                                       max_length=max_length)
+                np.save(group_save_path, groups)
+                np.save(counts_save_path, counts)
+                logger.info(f"Groups info save to {group_save_path}")
+        else:
+            groups, counts = create_lengths_groups(lengths=[len(x[0]) for x in self.data],
+                                                   max_length=max_length)
+        return groups, counts
+
 
 if __name__ == '__main__':
     from tqdm import tqdm
+    from parser.data.samplers.grouped_sampler import GroupedSampler
+    from torch.utils.data import SequentialSampler
+
     dataset = DependencyDataset(
-        # file_path="sample.conllu",
-        file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/train.conllx",
+        file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/dev.conllx",
         bert="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
     )
-    c = 0
-    for x in tqdm(dataset):
-        c += 1
-        if c > 10000:
-            c = 0
-            break
-    for x in tqdm(dataset):
-        c += 1
-        if c > 10000:
-            break
-    # from torch.utils.data import DataLoader
-    # from parser.data.collate import collate_dependency_data
-    # loader = DataLoader(dataset, batch_size=32, collate_fn=collate_dependency_data)
-    # for batch in tqdm(loader):
-    #     # print(batch)
-    #     pass
+
+    from torch.utils.data import DataLoader
+    from parser.data.collate import collate_dependency_data
+
+    group_ids, group_counts = dataset.get_groups()
+    loader = DataLoader(dataset, collate_fn=collate_dependency_data,
+                        sampler=GroupedSampler(
+                            dataset=dataset,
+                            sampler=SequentialSampler(dataset),
+                            group_ids=group_ids,
+                            batch_size=8,
+                        ))
+    for batch in tqdm(loader):
+        print(batch)
