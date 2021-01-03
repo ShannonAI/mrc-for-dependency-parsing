@@ -11,16 +11,20 @@
 """
 
 
-import logging
 from itertools import chain
 from copy import deepcopy
 from typing import List, Iterable
+
+import numpy as np
 import torch
 from allennlp.data.token_indexers import PretrainedTransformerIndexer
 from conllu import parse_incr
 from torch.utils.data import Dataset
 
-logger = logging.getLogger(__name__)
+from parser.data.samplers.grouped_sampler import create_lengths_groups
+from parser.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class DependencyT2TDataset(Dataset):
@@ -48,17 +52,18 @@ class DependencyT2TDataset(Dataset):
     def __init__(
         self,
         file_path: str,
-        # tokenizer: BertWordPieceTokenizer,
         bert: str,
         use_language_specific_pos: bool = False,
+        pos_tags: List[str] = None,
+        dep_tags: List[str] = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.use_language_specific_pos = use_language_specific_pos
         self.file_path = file_path
-        # self.tokenizer = tokenizer
         self.data = []  # list of (words, pos_tags, dp_tags, dp_heads)
         with open(file_path, "r") as conllu_file:
+            logger.info(f"Reading sentences from conllu dataset at: {file_path} ...")
             for ann_idx, annotation in enumerate(parse_incr(conllu_file)):
                 annotation = [x for x in annotation if isinstance(x["id"], int)]
 
@@ -66,23 +71,23 @@ class DependencyT2TDataset(Dataset):
                 dp_tags = [x["deprel"] for x in annotation]
                 words = [x["form"] for x in annotation]
                 if self.use_language_specific_pos:
-                    pos_tags = [x["xpostag"] for x in annotation]
+                    sample_pos_tags = [x["xpostag"] for x in annotation]
                 else:
-                    pos_tags = [x["upostag"] for x in annotation]
-                self.data.append((words, pos_tags, dp_tags, dp_heads))
+                    sample_pos_tags = [x["upostag"] for x in annotation]
+                self.data.append((words, sample_pos_tags, dp_tags, dp_heads))
 
             self.offsets = self.build_offsets()
             logger.info(f"Read {len(self.data)} sentences with "
-                        f"{len(self.offsets)} mrc-samples from conllu dataset at: %s", file_path)
+                        f"{len(self.offsets)} mrc-samples from conll dataset at: {file_path}")
 
-        self.pos_tags, self.pos_tag_2idx = self.build_label_vocab(chain(*[d[1] for d in self.data], [self.SEP_POS]))
-        self.dep_tags, self.dep_tag_2idx = self.build_label_vocab(chain(*[d[2] for d in self.data]))
+        self.pos_tags = pos_tags or self.build_label_vocab(chain(*[d[1] for d in self.data], [self.SEP_POS]))
+        self.pos_tag_2idx = {l: idx for idx, l in enumerate(self.pos_tags)}
+        self.dep_tags = dep_tags or self.build_label_vocab(chain(*[d[2] for d in self.data]))
+        self.dep_tag_2idx = {l: idx for idx, l in enumerate(self.dep_tags)}
         logger.info(f"pos tags: {self.pos_tag_2idx}")
         logger.info(f"dep tags: {self.dep_tag_2idx}")
 
-        self._matched_indexer = PretrainedTransformerIndexer(
-            model_name=bert
-        )  # todo check lower_case right or wrong
+        self._matched_indexer = PretrainedTransformerIndexer( model_name=bert)
         self._allennlp_tokenizer = self._matched_indexer._allennlp_tokenizer
 
     def build_offsets(self):
@@ -99,8 +104,8 @@ class DependencyT2TDataset(Dataset):
         labels_set = set()
         for l in labels:
             labels_set.add(l)
-        label_list = list(labels_set)
-        return label_list, {l: idx for idx, l in enumerate(label_list)}
+        label_list = sorted(list(labels_set))
+        return label_list
 
     @property
     def ignore_pos_tags(self):
@@ -163,7 +168,8 @@ class DependencyT2TDataset(Dataset):
         fields["mrc_mask"] = torch.BoolTensor(mrc_mask)
         fields["meta_data"] = {
             "words": words,
-            "ann_idx": ann_idx
+            "ann_idx": ann_idx,
+            "word_idx": word_idx
         }
 
         return fields
@@ -174,6 +180,7 @@ class DependencyT2TDataset(Dataset):
         vector for each original word.
         For reference: pretrained_transformer_mismatched indexer of AllenNLP
         """
+        # todo(yuxian): this line is extremely slow, need optimization
         wordpieces, offsets = self._allennlp_tokenizer.intra_word_tokenize(words)
 
         # For tokens that don't correspond to any word pieces, we put (-1, -1) into the offsets.
@@ -188,14 +195,56 @@ class DependencyT2TDataset(Dataset):
         }
         return output
 
+    def get_groups(self, max_length=128, cache=True):
+        """ge groups, used for GroupSampler"""
+        success = False
+        if cache:
+            group_save_path = self.file_path + "groups.npy"
+            counts_save_path = self.file_path + "groups_counts.npy"
+            try:
+                logger.info("Loading pre-computed groups")
+                counts = np.load(counts_save_path)
+                groups = np.load(group_save_path)
+                assert len(groups) == len(self)
+                success = True
+            except Exception as e:
+                logger.error(f"Loading pre-computed groups from {group_save_path} failed", exc_info=1)
+        if not success:
+            logger.info("Re-computing groups")
+            groups, counts = create_lengths_groups(lengths=self._get_item_lengths(),
+                                                   max_length=max_length)
+            np.save(group_save_path, groups)
+            np.save(counts_save_path, counts)
+            logger.info(f"Groups info save to {group_save_path}")
+
+        return groups, counts
+
+    def _get_item_lengths(self) -> List[int]:
+        """get seqence-length of every item"""
+        item_lengths = []
+        for words, _, _, _ in self.data:
+            item_lengths.extend([len(words)] * len(words))
+        return item_lengths
+
 
 if __name__ == '__main__':
-    dataset = DependencyT2TDataset(
-        file_path="sample.conllu",
-        bert="/data/nfsdata2/nlp_application/models/bert/bert-large-cased",
-    )
+    from tqdm import tqdm
+    from parser.data.samplers.grouped_sampler import GroupedSampler
+    from torch.utils.data import SequentialSampler
     from torch.utils.data import DataLoader
     from parser.data.collate import collate_dependency_t2t_data
-    loader = DataLoader(dataset, batch_size=32, collate_fn=collate_dependency_t2t_data)
-    for batch in loader:
+
+    dataset = DependencyT2TDataset(
+        file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/train.conllx",
+        bert="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
+    )
+    group_ids, group_counts = dataset.get_groups()
+    loader = DataLoader(dataset, collate_fn=collate_dependency_t2t_data,
+                        sampler=GroupedSampler(
+                            dataset=dataset,
+                            sampler=SequentialSampler(dataset),
+                            group_ids=group_ids,
+                            batch_size=32,
+                        ))
+    for batch in tqdm(loader):
         print(batch)

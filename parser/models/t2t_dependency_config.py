@@ -2,9 +2,6 @@
 """
 @author: Yuxian Meng
 @contact: yuxian_meng@shannonai.com
-
-@version: 1.0
-@file: mrc_biaffine_dependency_config
 @time: 2020/12/17 14:50
 @desc: 
 

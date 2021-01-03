@@ -78,8 +78,6 @@ class BiafDependency(pl.LightningModule):
                             help="additional layer type")
         parser.add_argument("--ignore_punct", action="store_true", help="ignore punct pos when evaluating")
         parser.add_argument("--freeze_bert", action="store_true", help="freeze bert embedding")
-        parser.add_argument("--group_sample", action="store_true",
-                            help="use group sampler, which could accelerate training")
         parser.add_argument("--scheduler", default="plateau", choices=["plateau", "linear_decay"],
                             help="scheduler type")
         parser.add_argument("--final_div_factor", type=float, default=1e4,
@@ -159,7 +157,7 @@ class BiafDependency(pl.LightningModule):
 
         # todo add betas to arguments and tune it
         optimizer = AdamW(optimizer_grouped_parameters, lr=self.args.lr, eps=1e-8,
-                          betas=(0.9, 0.9))
+                          betas=(0.9, 0.999))
 
         if self.args.scheduler == "plateau":
             lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", patience=2, factor=0.85,

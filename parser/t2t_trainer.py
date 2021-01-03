@@ -4,7 +4,6 @@
 @contact: yuxian_meng@shannonai.com
 
 @version: 1.0
-@file: trainer
 @time: 2020/12/17 20:13
 @desc:
 
@@ -17,30 +16,41 @@ import torch
 from allennlp.nn.util import get_range_vector, get_device_of
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
-from transformers import BertConfig
-
+from transformers import BertConfig, AdamW
+from collections import namedtuple
 from parser.data.collate import collate_dependency_t2t_data
 from parser.data.dependency_t2t_reader import DependencyT2TDataset
 from parser.metrics import *
 from parser.models import *
 from parser.callbacks import *
 from parser.utils.get_parser import get_parser
+from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler
+from parser.data.samplers.grouped_sampler import GroupedSampler
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 class MrcDependency(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
-        self.args = args
+
+        if isinstance(args, argparse.Namespace):
+            self.save_hyperparameters(args)
+            self.args = args
+        else:
+            # eval mode
+            TmpArgs = namedtuple("tmp_args", field_names=list(args.keys()))
+            self.args = args = TmpArgs(**args)
+
         bert_config = BertConfig.from_pretrained(args.bert_dir)
         self.model_config = BertMrcDependencyConfig(
             pos_tags=args.pos_tags,
             dep_tags=args.dep_tags,
             pos_dim=args.pos_dim,
             additional_layer=args.additional_layer,
-            additional_layer_type=args.additional_layer_type,
             additional_layer_dim=args.additional_layer_dim,
+            additional_layer_type=args.additional_layer_type,
             mrc_dropout=args.mrc_dropout,
-
             **bert_config.__dict__
         )
         self.model = BiaffineDependencyT2TParser.from_pretrained(args.bert_dir, config=self.model_config)
@@ -49,8 +59,9 @@ class MrcDependency(pl.LightningModule):
             for param in self.model.bert.parameters():
                 param.requires_grad = False
 
-        self.train_stat = AttachmentScores(ignore_classes=args.ignore_pos_tags)  # todo ignore classes?
-        self.val_stat = AttachmentScores(ignore_classes=args.ignore_pos_tags) if not self.args.use_mst else AttachmentScores  # todo implement MST
+        self.train_stat = AttachmentScores()
+        self.val_stat = AttachmentScores() if not self.args.use_mst else T2TAttachmentScores()
+        self.test_stat = AttachmentScores() if not self.args.use_mst else T2TAttachmentScores()
         self.ignore_pos_tags = list(args.ignore_pos_tags)
 
     @staticmethod
@@ -88,13 +99,14 @@ class MrcDependency(pl.LightningModule):
         )
         loss = arc_nll + tag_nll
         eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
-
+        bsz = span_idx.size(0)
+        # [bsz]
+        batch_range_vector = get_range_vector(bsz, get_device_of(span_idx))
+        gold_positions = span_idx[:, 0]
+        eval_mask = eval_mask[batch_range_vector, gold_positions] # [bsz]
         if phase == "train" or not self.args.use_mst:
-            bsz = span_idx.size(0)
             # [bsz]
-            batch_range_vector = get_range_vector(bsz, get_device_of(span_idx))
-            # [bsz]
-            gold_positions = span_idx[:, 0]
+
             pred_positions = parent_probs.argmax(1)
             metric_name = f"{phase}_stat"
             metric = getattr(self, metric_name)
@@ -103,18 +115,19 @@ class MrcDependency(pl.LightningModule):
                 parent_tag_probs[batch_range_vector, pred_positions].argmax(1).unsqueeze(-1),  # [bsz, 1]
                 gold_positions.unsqueeze(-1),  # [bsz, 1]
                 span_tag.unsqueeze(-1),  # [bsz, 1]
-                eval_mask[batch_range_vector, pred_positions].unsqueeze(-1)
+                eval_mask.unsqueeze(-1)  # [bsz, 1]
             )
         else:
-            metric = self.val_stat
-            self.val_stat(
-                        [x["ann_idx"] for x in meta_data],
-                        [len(x["words"]) for x in meta_data],
+            metric = getattr(self, f"{phase}_stat")
+            metric.update(
+                        meta_data["ann_idx"],
+                        meta_data["word_idx"],
+                        [len(x) for x in meta_data["words"]],
                         parent_probs,
                         parent_tag_probs,
                         span_idx,
                         span_tag,
-                        # evaluation_mask,
+                        eval_mask
                     )
 
         self.log(f'{phase}_loss', loss)
@@ -126,6 +139,9 @@ class MrcDependency(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         return self.common_step(batch, phase="val")
 
+    def test_step(self, batch, batch_idx):
+        return self.common_step(batch, phase="test")
+
     def log_on_epoch_end(self, phase="train"):
         metric_name = f"{phase}_stat"
         metric = getattr(self, metric_name)
@@ -133,11 +149,14 @@ class MrcDependency(pl.LightningModule):
         for sub_metric, metric_value in metrics.items():
             self.log(f"{phase}_{sub_metric}", metric_value)
 
+    def training_epoch_end(self, outputs):
+        self.log_on_epoch_end("train")
+
     def validation_epoch_end(self, outputs):
         self.log_on_epoch_end("val")
 
-    def training_epoch_end(self, outputs):
-        self.log_on_epoch_end("train")
+    def test_epoch_end(self, outputs):
+        self.log_on_epoch_end("test")
 
     def configure_optimizers(self):
         no_decay = ["bias", "LayerNorm.weight"]
@@ -154,8 +173,10 @@ class MrcDependency(pl.LightningModule):
                 "weight_decay": 0.0,
             },
         ]
-        # todo beta
-        optimizer = torch.optim.Adam(optimizer_grouped_parameters, lr=self.args.lr, eps=1e-8)
+
+        # todo add betas to arguments and tune it
+        optimizer = AdamW(optimizer_grouped_parameters, lr=self.args.lr, eps=1e-8,
+                          betas=(0.9, 0.999))
 
         if self.args.scheduler == "plateau":
             lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max", patience=2, factor=0.85,
@@ -201,9 +222,8 @@ class MrcDependency(pl.LightningModule):
         return new_mask
 
 
-def cli_main():
+def main():
     pl.seed_everything(1234)
-
     # ------------
     # args
     # ------------
@@ -212,41 +232,52 @@ def cli_main():
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
+    args.num_gpus = len([x for x in str(args.gpus).split(",") if x.strip()]) if "," in args.gpus else int(args.gpus)
+
     # ------------
     # data
     # ------------
+    def get_dataloader(args, split="train", shuffle=True):
+        dataset = DependencyT2TDataset(
+            file_path=os.path.join(args.data_dir, f"{split}.{args.data_format}"),
+            pos_tags=getattr(args, "pos_tags", None),
+            dep_tags=getattr(args, "dep_tags", None),
+            bert=args.bert_dir
+        )
+        if args.num_gpus <= 1:
+            sampler = RandomSampler(dataset) if shuffle else SequentialSampler(dataset)
+        else:
+            sampler = DistributedSampler(dataset, shuffle=shuffle)
+        if args.group_sample:
+            groups, counts = dataset.get_groups()
+            sampler = GroupedSampler(
+                dataset=dataset,
+                sampler=sampler,
+                group_ids=groups,
+                batch_size=args.batch_size,
+                counts=counts
+            )
+        loader = DataLoader(
+            dataset=dataset,
+            sampler=sampler,
+            batch_size=args.batch_size,
+            num_workers=args.workers,
+            pin_memory=True,
+            collate_fn=collate_dependency_t2t_data
+        )
 
-    train_dataset = DependencyT2TDataset(
-        file_path=os.path.join(args.data_dir, f"dev.{args.data_format}"),
-        bert=args.bert_dir
-    )
-    train_loader = DataLoader(
-        dataset=train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.workers,
-        pin_memory=True,
-        collate_fn=collate_dependency_t2t_data
-    )
-    val_dataset = DependencyT2TDataset(
-        file_path=os.path.join(args.data_dir, f"dev.{args.data_format}"),
-        bert=args.bert_dir
-    )
-    val_loader = DataLoader(
-        dataset=val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.workers,
-        pin_memory=True,
-        collate_fn=collate_dependency_t2t_data
-    )
+        return loader
 
-    args.pos_tags = train_dataset.pos_tags
-    args.dep_tags = train_dataset.dep_tags
-    args.ignore_pos_tags = train_dataset.ignore_pos_tags if args.ignore_punct else set()
+    # train_loader = get_dataloader(args, "train", shuffle=True)
+    train_loader = get_dataloader(args, "train", shuffle=True)
+    # save these information to args to convene evaluation.
+    args.pos_tags = train_loader.dataset.pos_tags
+    args.dep_tags = train_loader.dataset.dep_tags
+    args.ignore_pos_tags = train_loader.dataset.ignore_pos_tags if args.ignore_punct else set()
 
-    num_gpus = len([x for x in str(args.gpus).split(",") if x.strip()]) if "," in args.gpus else int(args.gpus)
-    args.t_total = (len(train_loader) // (args.accumulate_grad_batches * num_gpus) + 1) * args.max_epochs
+    val_loader = get_dataloader(args, "dev", shuffle=False)
+
+    args.t_total = (len(train_loader) // (args.accumulate_grad_batches * args.num_gpus) + 1) * args.max_epochs
     # ------------
     # model
     # ------------
@@ -255,12 +286,10 @@ def cli_main():
     # load pretrained_model
     if args.pretrained:
         model.load_state_dict(
-            torch.load(args.pretrained,map_location=torch.device('cpu'))["state_dict"]
+            torch.load(args.pretrained, map_location=torch.device('cpu'))["state_dict"]
         )
-    # ------------
-    # training
-    # ------------
-    # checkpoint
+
+    # call backs
     checkpoint_callback = ModelCheckpoint(
         monitor='val_UAS',
         dirpath=args.default_root_dir,
@@ -269,14 +298,16 @@ def cli_main():
         mode='max',
         verbose=True
     )
+
     lr_monitor = LearningRateMonitor(logging_interval='step')
     print_model = ModelPrintCallback(print_modules=["model"])
     callbacks = [checkpoint_callback, lr_monitor, print_model]
     if args.freeze_bert:
         callbacks.append(EvalCallback(["model.bert"]))
-    trainer = pl.Trainer.from_argparse_args(args, callbacks=callbacks)
+
+    trainer = pl.Trainer.from_argparse_args(args, callbacks=callbacks, replace_sampler_ddp=False)
     trainer.fit(model, train_loader, val_loader)
 
 
 if __name__ == '__main__':
-    cli_main()
+    main()

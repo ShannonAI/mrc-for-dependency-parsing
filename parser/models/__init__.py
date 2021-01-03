@@ -1,6 +1,6 @@
 
-from parser.models.mrc_biaffine_dependency_config import BertMrcDependencyConfig
+from parser.models.t2t_dependency_config import BertMrcDependencyConfig
 from parser.models.biaffine_dependency_config import BertDependencyConfig
 
-from parser.models.biaffine_dependency_t2t_parser import BiaffineDependencyT2TParser
+from parser.models.t2t_dependency_parser import BiaffineDependencyT2TParser
 from parser.models.biaffine_dependency_parser import BiaffineDependencyParser

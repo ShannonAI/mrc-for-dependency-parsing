@@ -16,4 +16,7 @@ Note that you should change `MODEL_DIR` and `BERT_DIR` to your own path.
 See `biaf_evaluate.py`
 Note that you should change `HPARAMS` and `CHECKPOINT` to your own path.
 
-### 2.MRC(TODO)
+### 2. Token-to-Token MRC (Developing)
+#### Train
+See `scripts/t2t/train_ptb_freeze.sh`
+Note that you should change `MODEL_DIR` and `BERT_DIR` to your own path.

@@ -21,6 +21,9 @@ class ModelPrintCallback(pl.callbacks.base.Callback):
         self.print_modules = print_modules
 
     def on_fit_start(self, trainer, pl_module):
+        # Prints only from process 0
+        if not trainer.is_global_zero:
+            return
         for name in self.print_modules:
             print(f"==== Model Print of {name}: ")
             if name == ".":
