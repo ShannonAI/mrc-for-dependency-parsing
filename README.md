@@ -10,7 +10,7 @@ Codes for dependency parsing, including following models:
 ## Reproduction
 ### 1. Deep Biaffine Attention
 #### Train
-See `scripts/biaf/biaf_ptb_reproduce.sh`
+See `scripts/biaf/biaf_ptb.sh`
 Note that you should change `MODEL_DIR` and `BERT_DIR` to your own path.
 #### Evaluate
 See `biaf_evaluate.py`

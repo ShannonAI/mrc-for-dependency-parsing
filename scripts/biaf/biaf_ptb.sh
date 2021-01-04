@@ -2,17 +2,16 @@ export PYTHONPATH="$PWD"
 export TOKENIZERS_PARALLELISM=false
 
 DATA_DIR="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/"
-BERT_DIR="/data/nfsdata2/nlp_application/models/bert/bert-base-uncased"
+BERT_DIR="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking"
 
-
+# hyper-params
 DROPOUT=0.3
-LR=2e-5
-LAYER=2
+LR=1e-3
+LAYER=3
 
-OUTPUT_DIR="/data/yuxian/train_logs/dependency/ptb/debug"
+OUTPUT_DIR="/data/yuxian/train_logs/dependency/ptb/reproduce"
 mkdir -p $OUTPUT_DIR
 
-# todo 尝试freeze_bert
 python parser/biaf_trainer.py \
 --default_root_dir $OUTPUT_DIR \
 --data_dir $DATA_DIR \
@@ -21,15 +20,16 @@ python parser/biaf_trainer.py \
 --freeze_bert \
 --bert_dir $BERT_DIR \
 --additional_layer $LAYER \
+--additional_layer_dim 800 \
 --biaf_dropout $DROPOUT \
---workers 0 \
+--workers 8 \
 --gpus="1," \
+--accelerator "ddp" \
 --precision 32 \
---batch_size 16 \
---accumulate_grad_batches 8 \
+--batch_size 128 \
+--accumulate_grad_batches 1 \
 --lr $LR \
 --gradient_clip_val=1.0 \
 --ignore_punct \
---warmup_steps 0 \
---scheduler linear_decay \
---max_epochs 100
+--max_epochs 80 \
+--group_sample
