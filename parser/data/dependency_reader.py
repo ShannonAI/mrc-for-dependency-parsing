@@ -161,8 +161,8 @@ class DependencyDataset(Dataset):
         """ge groups, used for GroupSampler"""
         success = False
         if cache:
-            group_save_path = self.file_path + "groups.npy"
-            counts_save_path = self.file_path + "groups_counts.npy"
+            group_save_path = self.file_path + ".groups.npy"
+            counts_save_path = self.file_path + ".groups_counts.npy"
             try:
                 logger.info("Loading pre-computed groups")
                 counts = np.load(counts_save_path)

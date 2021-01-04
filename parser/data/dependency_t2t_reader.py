@@ -63,7 +63,7 @@ class DependencyT2TDataset(Dataset):
         self.file_path = file_path
         self.data = []  # list of (words, pos_tags, dp_tags, dp_heads)
         with open(file_path, "r") as conllu_file:
-            logger.info(f"Reading sentences from conllu dataset at: {file_path} ...")
+            logger.info(f"Reading sentences from conll dataset at: {file_path} ...")
             for ann_idx, annotation in enumerate(parse_incr(conllu_file)):
                 annotation = [x for x in annotation if isinstance(x["id"], int)]
 
@@ -199,8 +199,8 @@ class DependencyT2TDataset(Dataset):
         """ge groups, used for GroupSampler"""
         success = False
         if cache:
-            group_save_path = self.file_path + "groups.npy"
-            counts_save_path = self.file_path + "groups_counts.npy"
+            group_save_path = self.file_path + ".groups.npy"
+            counts_save_path = self.file_path + ".groups_counts.npy"
             try:
                 logger.info("Loading pre-computed groups")
                 counts = np.load(counts_save_path)
