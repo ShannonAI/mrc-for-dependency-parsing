@@ -80,14 +80,14 @@ class GroupedSampler(Sampler):
     def __init__(self, dataset: Dataset, sampler: Sampler, group_ids: Union[List[int], np.array], batch_size,
                  counts: np.array = None, queue_length: int = 1000):
         super(GroupedSampler, self).__init__(dataset)
-        self.dataset = dataset
+        self.data_source = dataset
         self.sampler = sampler
         self.group_ids = group_ids
         self.batch_size = batch_size
         self.counts = counts
         self.group_generator = None
-        # if self.counts is not None:
-        #     self.group_generator = self.get_group_generator(self.counts)
+        if self.counts is not None:
+            self.group_generator = self.get_group_generator(self.counts)
         self.queue_length = queue_length
         assert self.queue_length >= self.batch_size, "queue_length should greater or equal to batch_size"
 
@@ -141,23 +141,25 @@ class GroupedSampler(Sampler):
         """
         return len(self.sampler)
 
-    # todo(this is for accelerate bucket-sampler speed in ddp training)
-    #     because we want all gpus are dealing with samples with similar lengths
-    # @staticmethod
-    # def get_group_generator(counts: np.array) -> Iterator[int]:
-    #     """根据counts生成采样每个group的顺序"""
-    #     group_num = len(counts)
-    #     largest_group = np.argmax(counts).item()
-    #     ratios = counts / counts[largest_group]
-    #     accumulates = np.zeros_like(counts, dtype=np.float32)
-    #     while True:
-    #         accumulates[largest_group] += 1
-    #         for group_idx in range(group_num):
-    #             delta = ratios[group_idx]
-    #             accumulates[group_idx] += delta
-    #             if accumulates[group_idx] >= 1.0:
-    #                 yield group_idx
-    #                 accumulates[group_idx] -= 1
+    @staticmethod
+    def get_group_generator(counts: np.array) -> Iterator[int]:
+        """
+        Sample group idx according to count ratio.
+        This is for accelerate bucket-sampler speed in multi-gpu training,
+        because we want all gpus are dealing with samples with similar lengths
+        """
+        group_num = len(counts)
+        largest_group = np.argmax(counts).item()
+        ratios = counts / counts[largest_group]
+        accumulates = np.zeros_like(counts, dtype=np.float32)
+        while True:
+            accumulates[largest_group] += 1
+            for group_idx in range(group_num):
+                delta = ratios[group_idx]
+                accumulates[group_idx] += delta
+                if accumulates[group_idx] >= 1.0:
+                    yield group_idx
+                    accumulates[group_idx] -= 1
 
 
 if __name__ == '__main__':

@@ -17,7 +17,6 @@ import torch
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
 from transformers import BertConfig, AdamW
-from collections import namedtuple
 from parser.data.collate import collate_dependency_data
 from parser.data.dependency_reader import DependencyDataset
 from parser.metrics import *
@@ -25,20 +24,32 @@ from parser.models import *
 from parser.callbacks import *
 from parser.utils.get_parser import get_parser
 from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler
-from parser.data.samplers.grouped_sampler import GroupedSampler
+from parser.data.samplers import GroupedSampler
 
 
 class BiafDependency(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
 
-        if isinstance(args, argparse.Namespace):
-            self.save_hyperparameters(args)
-            self.args = args
-        else:
+        if not isinstance(args, argparse.Namespace):
             # eval mode
-            TmpArgs = namedtuple("tmp_args", field_names=list(args.keys()))
-            self.args = args = TmpArgs(**args)
+            assert isinstance(args, dict)
+            args = argparse.Namespace(**args)
+
+        # compute other fields according to args
+        train_dataset = DependencyDataset(
+            file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
+            bert=args.bert_dir
+        )
+        # save these information to args to convene evaluation.
+        args.pos_tags = train_dataset.pos_tags
+        args.dep_tags = train_dataset.dep_tags
+        args.ignore_pos_tags = train_dataset.ignore_pos_tags if args.ignore_punct else set()
+        args.num_gpus = len([x for x in str(args.gpus).split(",") if x.strip()]) if "," in args.gpus else int(args.gpus)
+        args.t_total = (len(train_dataset) // (args.accumulate_grad_batches * args.num_gpus) + 1) * args.max_epochs
+
+        self.save_hyperparameters(args)
+        self.args = args
 
         bert_config = BertConfig.from_pretrained(args.bert_dir)
         self.model_config = BertDependencyConfig(
@@ -202,6 +213,46 @@ class BiafDependency(pl.LightningModule):
             new_mask = new_mask & ~label_mask
         return new_mask
 
+    def get_dataloader(self, split="train", shuffle=True):
+        dataset = DependencyDataset(file_path=os.path.join(self.args.data_dir, f"{split}.{self.args.data_format}"),
+                                    pos_tags=getattr(self.args, "pos_tags", None),
+                                    dep_tags=getattr(self.args, "dep_tags", None),
+                                    bert=self.args.bert_dir)
+        if self.args.num_gpus <= 1:
+            sampler = RandomSampler(dataset) if shuffle else SequentialSampler(dataset)
+        else:
+            sampler = DistributedSampler(dataset, shuffle=shuffle)
+
+        if self.args.group_sample:
+            groups, counts = dataset.get_groups()
+            sampler = GroupedSampler(
+                dataset=dataset,
+                sampler=sampler,
+                group_ids=groups,
+                batch_size=self.args.batch_size,
+                counts=counts
+            )
+
+        loader = DataLoader(
+            dataset=dataset,
+            sampler=sampler,
+            batch_size=self.args.batch_size,
+            num_workers=self.args.workers,
+            pin_memory=True,
+            collate_fn=collate_dependency_data
+        )
+
+        return loader
+
+    def train_dataloader(self) -> DataLoader:
+        return self.get_dataloader("train", shuffle=True)
+
+    def val_dataloader(self) -> DataLoader:
+        return self.get_dataloader("dev", shuffle=False)
+
+    def test_dataloader(self) -> DataLoader:
+        return self.get_dataloader("test", shuffle=False)
+
 
 def main():
     pl.seed_everything(1234)
@@ -212,52 +263,6 @@ def main():
     parser = BiafDependency.add_model_specific_args(parser)
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
-
-    args.num_gpus = len([x for x in str(args.gpus).split(",") if x.strip()]) if "," in args.gpus else int(args.gpus)
-
-    # ------------
-    # data
-    # ------------
-
-    def get_dataloader(args, split="train", shuffle=True):
-        dataset = DependencyDataset(file_path=os.path.join(args.data_dir, f"{split}.{args.data_format}"),
-                                    pos_tags=getattr(args, "pos_tags", None),
-                                    dep_tags=getattr(args, "dep_tags", None),
-                                    bert=args.bert_dir)
-        if args.num_gpus <= 1:
-            sampler = RandomSampler(dataset) if shuffle else SequentialSampler(dataset)
-        else:
-            sampler = DistributedSampler(dataset, shuffle=shuffle)
-        if args.group_sample:
-            groups, counts = dataset.get_groups()
-            sampler = GroupedSampler(
-                dataset=dataset,
-                sampler=sampler,
-                group_ids=groups,
-                batch_size=args.batch_size,
-                counts=counts
-            )
-
-        loader = DataLoader(
-            dataset=dataset,
-            sampler=sampler,
-            batch_size=args.batch_size,
-            num_workers=args.workers,
-            pin_memory=True,
-            collate_fn=collate_dependency_data
-        )
-
-        return loader
-
-    train_loader = get_dataloader(args, "train", shuffle=True)
-
-    args.pos_tags = train_loader.dataset.pos_tags
-    args.dep_tags = train_loader.dataset.dep_tags
-    args.ignore_pos_tags = train_loader.dataset.ignore_pos_tags if args.ignore_punct else set()
-
-    val_loader = get_dataloader(args, "dev", shuffle=False)
-
-    args.t_total = (len(train_loader) // (args.accumulate_grad_batches * args.num_gpus) + 1) * args.max_epochs
 
     # ------------
     # model
@@ -286,8 +291,12 @@ def main():
     if args.freeze_bert:
         callbacks.append(EvalCallback(["model.bert"]))
 
-    trainer = pl.Trainer.from_argparse_args(args, callbacks=callbacks, replace_sampler_ddp=False)
-    trainer.fit(model, train_loader, val_loader)
+    trainer = pl.Trainer.from_argparse_args(
+        args,
+        callbacks=callbacks,
+        replace_sampler_ddp=False
+    )
+    trainer.fit(model)
 
 
 if __name__ == '__main__':
