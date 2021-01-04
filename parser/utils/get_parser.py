@@ -23,4 +23,6 @@ def get_parser() -> argparse.ArgumentParser:
                         help="Weight decay if we apply some.")
     parser.add_argument("--warmup_steps", default=0, type=int,
                         help="warmup steps used for scheduler.")
+    parser.add_argument("--group_sample", action="store_true",
+                        help="use group sampler, which could accelerate training")
     return parser

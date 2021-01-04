@@ -10,10 +10,13 @@ Codes for dependency parsing, including following models:
 ## Reproduction
 ### 1. Deep Biaffine Attention
 #### Train
-See `scripts/biaf/biaf_ptb_reproduce.sh`
+See `scripts/biaf/biaf_ptb.sh`
 Note that you should change `MODEL_DIR` and `BERT_DIR` to your own path.
 #### Evaluate
 See `biaf_evaluate.py`
 Note that you should change `HPARAMS` and `CHECKPOINT` to your own path.
 
-### 2.MRC(TODO)
+### 2. Token-to-Token MRC (Developing)
+#### Train
+See `scripts/t2t/train_ptb_freeze.sh`
+Note that you should change `MODEL_DIR` and `BERT_DIR` to your own path.

@@ -56,7 +56,7 @@ class DependencyDataset(Dataset):
         self.file_path = file_path
         self.data = []  # list of (words, pos_tags, dp_tags, dp_heads)
         with open(file_path, "r") as conllu_file:
-            logger.info(f"Reading sentences from conllu dataset at: {file_path} ...")
+            logger.info(f"Reading sentences from conll dataset at: {file_path} ...")
             for ann_idx, annotation in enumerate(parse_incr(conllu_file)):
                 annotation = [x for x in annotation if isinstance(x["id"], int)]
 
@@ -159,6 +159,7 @@ class DependencyDataset(Dataset):
 
     def get_groups(self, max_length=128, cache=True):
         """ge groups, used for GroupSampler"""
+        success = False
         if cache:
             group_save_path = self.file_path + "groups.npy"
             counts_save_path = self.file_path + "groups_counts.npy"
@@ -167,17 +168,16 @@ class DependencyDataset(Dataset):
                 counts = np.load(counts_save_path)
                 groups = np.load(group_save_path)
                 assert len(groups) == len(self)
+                success = True
             except Exception as e:
                 logger.error(f"Loading pre-computed groups from {group_save_path} failed", exc_info=1)
-                logger.info("Re-computing groups")
-                groups, counts = create_lengths_groups(lengths=[len(x[0]) for x in self.data],
-                                                       max_length=max_length)
-                np.save(group_save_path, groups)
-                np.save(counts_save_path, counts)
-                logger.info(f"Groups info save to {group_save_path}")
-        else:
+        if not success:
+            logger.info("Re-computing groups")
             groups, counts = create_lengths_groups(lengths=[len(x[0]) for x in self.data],
                                                    max_length=max_length)
+            np.save(group_save_path, groups)
+            np.save(counts_save_path, counts)
+            logger.info(f"Groups info save to {group_save_path}")
         return groups, counts
 
 

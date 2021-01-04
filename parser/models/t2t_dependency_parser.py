@@ -16,7 +16,7 @@ from torch import nn
 from transformers import BertModel, BertPreTrainedModel
 from transformers.modeling_bert import BertEncoder
 
-from parser.models.mrc_biaffine_dependency_config import BertMrcDependencyConfig
+from parser.models.t2t_dependency_config import BertMrcDependencyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -68,28 +68,12 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
 
         else:
             self.additional_encoder = None
-
+        # todo try re-init with xavier-uniform and bias=0
         self.parent_feedforward = nn.Linear(hidden_size, 1)
         self.parent_tag_feedforward = nn.Linear(hidden_size, num_dep_labels)
 
         # self.mrc_dropout = nn.Dropout(config.mrc_dropout)
         self._dropout = InputVariationalDropout(config.mrc_dropout)
-
-    # todo reinit
-
-    #     self._init_weights(self.parent_feedforward)
-    #     self._init_weights(self.parent_tag_feedforward)
-    #     self._init_weights(self.additional_encoder)
-    #
-    # def _init_weights(self, module):
-    #     """ Initialize the weights. refer to BERT"""
-    #     if isinstance(module, (nn.Linear, nn.Embedding)):
-    #         module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-    #     elif isinstance(module, nn.LayerNorm):
-    #         module.bias.data.zero_()
-    #         module.weight.data.fill_(1.0)
-    #     if isinstance(module, nn.Linear) and module.bias is not None:
-    #         module.bias.data.zero_()
 
     @overrides
     def forward(
@@ -103,7 +87,24 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
         pos_tags: torch.LongTensor,
         word_mask: torch.BoolTensor,
         mrc_mask: torch.BoolTensor,
-    ) -> Dict[str, torch.Tensor]:
+    ):
+        """  todo implement docstring
+        Args:
+            token_ids: [batch_size, num_word_pieces]
+            type_ids: [batch_size, num_word_pieces]
+            offsets: [batch_size, num_words, 2]
+            wordpiece_mask: [batch_size, num_word_pieces]
+            span_idx: [batch_size, 2]
+            span_tag: [batch_size, 1]
+            pos_tags: [batch_size, num_words]
+            word_mask: [batch_size, num_words]
+            mrc_mask: [batch_size, num_words]
+        Returns:
+            parent_probs: [batch_size, num_word]
+            parent_tag_probs: [batch_size, num_words]
+            arc_nll: [1]
+            tag_nll: [1]
+        """
 
         embedded_text_input = self.get_word_embedding(
             token_ids=token_ids,
@@ -115,7 +116,9 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
             embedded_pos_tags = self.pos_embedding(pos_tags)
             embedded_text_input = torch.cat([embedded_text_input, embedded_pos_tags], -1)
             if self.fuse_layer is not None:
-                embedded_text_input = self._dropout(self.fuse_layer(embedded_text_input))
+                embedded_text_input = self.fuse_layer(embedded_text_input)
+        # todo compare normal dropout with InputVariationalDropout
+        embedded_text_input = self._dropout(embedded_text_input)
 
         if self.additional_encoder is not None:
             if self.config.additional_layer_type == "transformer":
@@ -131,18 +134,20 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
             encoded_text = embedded_text_input
 
         batch_size, _, encoding_dim = encoded_text.size()
-        # [bsz]
-        batch_range_vector = get_range_vector(batch_size, get_device_of(encoded_text))
-        # [bsz]
-        gold_positions = span_idx[:, 0]
 
         # shape (batch_size, sequence_length, tag_classes)
         parent_tag_scores = self.parent_tag_feedforward(encoded_text)
         # shape (batch_size, sequence_length)
         parent_scores = self.parent_feedforward(encoded_text).squeeze(-1)
 
+        # todo support cases that span_idx and span_tag are None
+        # [bsz]
+        batch_range_vector = get_range_vector(batch_size, get_device_of(encoded_text))
+        # [bsz]
+        gold_positions = span_idx[:, 0]
+
         # compute parent arc loss
-        minus_inf = -1e4
+        minus_inf = -1e8
         mrc_mask = torch.logical_and(mrc_mask, word_mask)
         parent_scores = parent_scores + (~mrc_mask).float() * minus_inf
 
@@ -192,7 +197,6 @@ if __name__ == '__main__':
     bert_path = "/data/nfsdata2/nlp_application/models/bert/bert-large-cased"
     bert_config = BertConfig.from_pretrained(bert_path)
     bert_dep_config = BertMrcDependencyConfig(
-        # "/data/nfsdata2/nlp_application/models/bert/bert-large-cased",
         pos_tags=[f"pos_{i}" for i in range(5)],
         dep_tags=[f"dep_{i}" for i in range(5)],
         additional_layer=3,
