@@ -50,8 +50,9 @@ class BiaffineDependencyParser(BertPreTrainedModel):
             self.pos_embedding = nn.Embedding(num_pos_labels, config.pos_dim)
             nn.init.xavier_uniform_(self.pos_embedding.weight)
             if config.additional_layer_type != "lstm" and config.pos_dim+config.hidden_size != hidden_size:
-                self.fuse_layer = nn.Linear(config.pos_dim+config.hidden_size, hidden_size, bias=False)
+                self.fuse_layer = nn.Linear(config.pos_dim+config.hidden_size, hidden_size)
                 nn.init.xavier_uniform_(self.fuse_layer.weight)
+                self.fuse_layer.bias.data.zero_()
             else:
                 self.fuse_layer = None
         else:
@@ -64,8 +65,11 @@ class BiaffineDependencyParser(BertPreTrainedModel):
                 new_config = deepcopy(config)
                 new_config.hidden_size = hidden_size
                 new_config.num_hidden_layers = config.additional_layer
-                new_config.hidden_dropout_prob = new_config.attention_probs_dropout_prob = config.biaf_dropout
+                new_config.hidden_dropout_prob = config.biaf_dropout
+                new_config.attention_probs_dropout_prob = config.biaf_dropout  # todo add to hparams and tune
                 self.additional_encoder = BertEncoder(new_config)
+                self.additional_encoder.apply(self._init_bert_weights)
+
             else:
                 assert hidden_size % 2 == 0, "Bi-LSTM need an even hidden_size"
                 self.additional_encoder = StackedBidirectionalLstmSeq2SeqEncoder(
@@ -100,12 +104,18 @@ class BiaffineDependencyParser(BertPreTrainedModel):
         self._input_dropout = nn.Dropout(config.biaf_dropout)
 
         self._head_sentinel = torch.nn.Parameter(torch.randn([1, 1, hidden_size]))
-        # special init. todo ablation study
-        # tmp = torch.randn([hidden_size, hidden_size])
-        # torch.nn.init.xavier_uniform_(tmp)
-        # with torch.no_grad():
-        #     self._head_sentinel.data[0][0] = tmp[0]
 
+    def _init_bert_weights(self, module):
+        """ Initialize the weights. copy from transformers.BertPreTrainedModel"""
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
 
     @overrides
     def forward(
@@ -526,8 +536,10 @@ if __name__ == '__main__':
         additional_layer=3,
         pos_dim=100,
         biaf_dropout=0.3,
-        additional_layer_type="lstm",
-        additional_layer_dim=800,
+        additional_layer_type="transformer",
+        additional_layer_dim=1024,
+        # additional_layer_type="lstm",
+        # additional_layer_dim=800,
         arc_representation_dim=500,
         tag_representation_dim=100,
         **bert_config.__dict__

@@ -199,13 +199,14 @@ class DependencyT2TDataset(Dataset):
         """ge groups, used for GroupSampler"""
         success = False
         if cache:
-            group_save_path = self.file_path + ".groups.npy"
-            counts_save_path = self.file_path + ".groups_counts.npy"
+            group_save_path = self.file_path + ".t2t.groups.npy"
+            counts_save_path = self.file_path + ".t2t.groups_counts.npy"
             try:
                 logger.info("Loading pre-computed groups")
                 counts = np.load(counts_save_path)
                 groups = np.load(group_save_path)
-                assert len(groups) == len(self)
+                assert len(groups) == len(self), \
+                f"number of group_idxs {len(groups)} should have same length as dataset: {len(self)}"
                 success = True
             except Exception as e:
                 logger.error(f"Loading pre-computed groups from {group_save_path} failed", exc_info=1)
