@@ -2,6 +2,10 @@
 Codes for dependency parsing, including following models:
 1. [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)](https://arxiv.org/abs/1611.01734) .
 1. (developing) Mrc Dependency parsing
+    -[ ] try better init
+    -[ ] add backward score
+    -[ ] add biaffine struct
+    
 
 ## Requirements
 * python>=3.6

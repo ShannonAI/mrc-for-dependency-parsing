@@ -6,7 +6,7 @@
 @version: 1.0
 @file: collate
 @time: 2020/12/18 11:11
-@desc: 
+@desc: todo put these function into their corresponding dataset reader files
 
 """
 
@@ -18,14 +18,15 @@ def collate_dependency_t2t_data(batch: List[Dict[str, torch.Tensor]]) -> Dict[st
     """
     pad to maximum length of this batch
     Args:
-        batch: a batch of mrc samples
-        fields:
+        batch: a batch of mrc samples, includingfields:
             token_ids: [num_word_pieces]
             type_ids: [num_word_pieces]
             offsets: [num_words, 2]
             wordpiece_mask: [num_word_pieces]
             span_idx: [2]
             span_tag: [1]
+            child_arcs: [num_words]
+            child_tags: [num_words]
             pos_tags: [num_words]
             mrc_mask: [num_words]
             word_mask: [num_words]
@@ -50,7 +51,7 @@ def collate_dependency_t2t_data(batch: List[Dict[str, torch.Tensor]]) -> Dict[st
             pad_output[sample_idx][: data.shape[0]] = data
         output[field] = pad_output
 
-    for field in ["pos_tags", "mrc_mask", "word_mask"]:
+    for field in ["pos_tags", "mrc_mask", "word_mask", "child_arcs", "child_tags"]:
         pad_output = torch.full([batch_size, max_words], 0, dtype=batch[0][field].dtype)
         for sample_idx in range(batch_size):
             data = batch[sample_idx][field]
@@ -72,8 +73,7 @@ def collate_dependency_data(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, t
     """
     pad to maximum length of this batch
     Args:
-        batch: a batch of dependency samples
-        fields:
+        batch: a batch of dependency samples, including fields:
             token_ids: [num_word_pieces]
             type_ids: [num_word_pieces]
             offsets: [num_words, 2]

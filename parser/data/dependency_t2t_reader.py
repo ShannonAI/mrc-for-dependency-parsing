@@ -129,6 +129,8 @@ class DependencyT2TDataset(Dataset):
             pos_tags: [num_words]
             mrc_mask: [num_words]
             word_mask: [num_words]
+            child_arcs: [num_words]
+            child_tags: [num_words]
             meta_data: dict of meta_fields
         """
         ann_idx, word_idx = self.offsets[idx]
@@ -154,9 +156,20 @@ class DependencyT2TDataset(Dataset):
         mrc_pos_tag_idxs = [self.pos_tag_2idx[p] for p in query_pos_tags + pos_tags]
         # valid parent idxs
         mrc_mask = [False] * mrc_length
-        # only context(and SEP, which represents root) can be parent
+        # only context(and SEP, which represents root) can be parent/child
         mrc_mask[query_length:] = [True] * (len(words) + 1)
-        mrc_mask[query_length + word_idx + 1] = False  # origin word cannot be parent of itself
+        mrc_mask[query_length + word_idx + 1] = False  # origin word cannot be parent/child of itself
+
+        # todo root的child怎么算？
+        child_flags = [0] * mrc_length
+        child_tags = [0] * mrc_length
+        for child_idx, parent_idx in enumerate(dp_heads):
+            # +1 because word_idx start from 0, but in dependency ann, true word start from 1
+            if parent_idx == word_idx + 1:
+                child_flags[child_idx + query_length+1] = 1
+                child_tags[child_idx + query_length+1] = self.dep_tag_2idx[dp_tags[child_idx]]
+        fields["child_arcs"] = torch.LongTensor(child_flags)
+        fields["child_tags"] = torch.LongTensor(child_tags)
 
         parent_tag = dp_tags[word_idx]
         parent_idx = dp_heads[word_idx]
@@ -236,7 +249,8 @@ if __name__ == '__main__':
     from parser.data.collate import collate_dependency_t2t_data
 
     dataset = DependencyT2TDataset(
-        file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/train.conllx",
+        # file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/train.conllx",
+        file_path="sample.conllu",
         bert="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
     )
     group_ids, group_counts = dataset.get_groups()

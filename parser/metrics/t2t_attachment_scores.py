@@ -54,6 +54,8 @@ class T2TAttachmentScores(Metric):
         sent_lens: List[int],
         parent_probs: torch.Tensor,
         parent_tag_probs: torch.Tensor,
+        child_probs: torch.Tensor,
+        child_tag_probs: torch.Tensor,
         span_idx: torch.Tensor,
         span_tag: torch.Tensor,
         mask: Optional[torch.BoolTensor] = None,
@@ -70,6 +72,10 @@ class T2TAttachmentScores(Metric):
             A tensor of parent predictions of shape (batch_size, timesteps).
         parent_tag_probs: `torch.Tensor`, required.
             A tensor of parent tag predictions of shape (batch_size, timesteps, num_tag_classes)
+        child_probs: `torch.Tensor`, required.
+            A tensor of parent predictions of shape (batch_size, timesteps).
+        child_tag_probs: `torch.Tensor`, required.
+            A tensor of parent tag predictions of shape (batch_size, timesteps, num_tag_classes)
         span_idx : `torch.LongTensor`, required.
             A torch tensor representing the gold span position target
             in the dependency parse. Has shape `(batch_size, 2)`.
@@ -80,6 +86,7 @@ class T2TAttachmentScores(Metric):
         """
         for fields in zip(ann_idxs, word_idxs, sent_lens,
                           parent_probs.detach().cpu().numpy(), parent_tag_probs.detach().cpu().numpy(),
+                          child_probs.detach().cpu().numpy(), child_tag_probs.detach().cpu().numpy(),
                           span_idx.detach().cpu().numpy(), span_tag.detach().cpu().numpy(),
                           mask.detach().cpu().numpy()):
             self.to_compute_anns.append(fields)
@@ -101,18 +108,29 @@ class T2TAttachmentScores(Metric):
             gold_indices = torch.ones([sent_len], dtype=torch.long)
             gold_labels = torch.ones([sent_len], dtype=torch.long)
             eval_mask = torch.ones([sent_len], dtype=torch.bool)
-            attended_arcs = torch.zeros([seq_len, seq_len])
-            pairwise_head_probs = torch.zeros([seq_len, seq_len, num_tag])
+            parent_attended_arcs = torch.zeros([seq_len, seq_len])
+            parent_pairwise_head_probs = torch.zeros([seq_len, seq_len, num_tag])
+            child_attended_arcs = torch.zeros([seq_len, seq_len])
+            child_pairwise_head_probs = torch.zeros([seq_len, seq_len, num_tag])
             # note: timesteps==sent_len*2+3, because of mrc format.
             # parent_probs: [seq_len*2+3], parent_tag_probs: [seq_len*2+3, num_tag_classes], span_idx: 2, span_tag: 1
             for (_, word_idx, sent_len, sent_parent_probs, sent_parent_tag_probs,
+                 sent_child_probs, sent_child_tag_probs,
                  sent_span_idx, sent_span_tag, mask) in mrc_samples:
                 gold_pos = sent_span_idx[0]
                 gold_indices[word_idx] = gold_pos-sent_len-2
                 gold_labels[word_idx] = sent_span_tag
                 eval_mask[word_idx] = bool(mask)
-                attended_arcs[word_idx+1] = torch.FloatTensor(sent_parent_probs[sent_len + 2: 2 * sent_len + 3])
-                pairwise_head_probs[word_idx+1] = torch.FloatTensor(sent_parent_tag_probs[sent_len + 2: 2 * sent_len + 3])
+                context_start, context_end = sent_len + 2, 2 * sent_len + 3
+                # add parent score
+                parent_attended_arcs[word_idx+1] = torch.FloatTensor(sent_parent_probs[context_start: context_end])
+                parent_pairwise_head_probs[word_idx+1] = torch.FloatTensor(sent_parent_tag_probs[context_start: context_end])
+                # add child score
+                child_attended_arcs[:, word_idx+1] = torch.FloatTensor(sent_child_probs[context_start: context_end])
+                child_pairwise_head_probs[word_idx + 1] = torch.FloatTensor(sent_parent_tag_probs[context_start: context_end])
+            # todo normalize according to row, since every child can only have one parent
+            pairwise_head_probs = parent_pairwise_head_probs * child_pairwise_head_probs
+            attended_arcs = parent_attended_arcs * child_attended_arcs
 
             # This energy tensor expresses the following relation:
             # energy[i,j] = "Score that i is the head of j". In this

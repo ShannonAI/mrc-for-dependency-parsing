@@ -42,8 +42,9 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
             self.pos_embedding = nn.Embedding(num_pos_labels, config.pos_dim)
             nn.init.xavier_uniform_(self.pos_embedding.weight)
             if config.additional_layer_type != "lstm" and config.pos_dim+config.hidden_size != hidden_size:
-                self.fuse_layer = nn.Linear(config.pos_dim+config.hidden_size, hidden_size, bias=False)
+                self.fuse_layer = nn.Linear(config.pos_dim+config.hidden_size, hidden_size)
                 nn.init.xavier_uniform_(self.fuse_layer.weight)
+                self.fuse_layer.bias.data.zero_()
             else:
                 self.fuse_layer = None
         else:
@@ -57,7 +58,9 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
                 new_config.hidden_size = hidden_size
                 new_config.num_hidden_layers = config.additional_layer
                 new_config.hidden_dropout_prob = new_config.attention_probs_dropout_prob = config.mrc_dropout
+                # new_config.attention_probs_dropout_prob = config.biaf_dropout  # todo add to hparams and tune
                 self.additional_encoder = BertEncoder(new_config)
+                self.additional_encoder.apply(self._init_bert_weights)
             else:
                 assert hidden_size % 2 == 0, "Bi-LSTM need an even hidden_size"
                 self.additional_encoder = StackedBidirectionalLstmSeq2SeqEncoder(
@@ -72,8 +75,23 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
         self.parent_feedforward = nn.Linear(hidden_size, 1)
         self.parent_tag_feedforward = nn.Linear(hidden_size, num_dep_labels)
 
+        self.child_feedforward = nn.Linear(hidden_size, 1)
+        self.child_tag_feedforward = nn.Linear(hidden_size, num_dep_labels)
+
         # self.mrc_dropout = nn.Dropout(config.mrc_dropout)
         self._dropout = InputVariationalDropout(config.mrc_dropout)
+
+    def _init_bert_weights(self, module):
+        """ Initialize the weights. copy from transformers.BertPreTrainedModel"""
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            # Slightly different from the TF version which uses truncated_normal for initialization
+            # cf https://github.com/pytorch/pytorch/pull/5617
+            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
 
     @overrides
     def forward(
@@ -84,6 +102,8 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
         wordpiece_mask: torch.BoolTensor,
         span_idx: torch.LongTensor,
         span_tag: torch.LongTensor,
+        child_arcs: torch.LongTensor,
+        child_tags: torch.LongTensor,
         pos_tags: torch.LongTensor,
         word_mask: torch.BoolTensor,
         mrc_mask: torch.BoolTensor,
@@ -96,6 +116,8 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
             wordpiece_mask: [batch_size, num_word_pieces]
             span_idx: [batch_size, 2]
             span_tag: [batch_size, 1]
+            child_arcs: [batch_size, num_words]
+            child_tags: [batch_size, num_words]
             pos_tags: [batch_size, num_words]
             word_mask: [batch_size, num_words]
             mrc_mask: [batch_size, num_words]
@@ -133,12 +155,17 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
         else:
             encoded_text = embedded_text_input
 
-        batch_size, _, encoding_dim = encoded_text.size()
+        batch_size, seq_len, encoding_dim = encoded_text.size()
 
         # shape (batch_size, sequence_length, tag_classes)
         parent_tag_scores = self.parent_tag_feedforward(encoded_text)
         # shape (batch_size, sequence_length)
         parent_scores = self.parent_feedforward(encoded_text).squeeze(-1)
+
+        # [bsz, seq_len, tag_classes]
+        child_tag_scores = self.child_tag_feedforward(encoded_text)
+        # [bsz, seq_len]
+        child_scores = self.child_feedforward(encoded_text).squeeze(-1)
 
         # todo support cases that span_idx and span_tag are None
         # [bsz]
@@ -150,19 +177,27 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
         minus_inf = -1e8
         mrc_mask = torch.logical_and(mrc_mask, word_mask)
         parent_scores = parent_scores + (~mrc_mask).float() * minus_inf
+        child_scores = child_scores + (~mrc_mask).float() * minus_inf
 
         # [bsz, seq_len]
         parent_logits = F.log_softmax(parent_scores, dim=-1)
-        arc_nll = -parent_logits[batch_range_vector, gold_positions].mean()
+        parent_arc_nll = -parent_logits[batch_range_vector, gold_positions].mean()
 
         # compute parent tag loss
-        tag_nll = F.cross_entropy(parent_tag_scores[batch_range_vector, gold_positions], span_tag)
+        parent_tag_nll = F.cross_entropy(parent_tag_scores[batch_range_vector, gold_positions], span_tag)
 
         parent_probs = F.softmax(parent_scores, dim=-1)
         parent_tag_probs = F.softmax(parent_tag_scores, dim=-1)
+        child_probs = F.sigmoid(child_scores)
+        child_tag_probs = F.softmax(child_tag_scores, dim=-1)
 
-        # loss = arc_nll + tag_nll
-        return parent_probs, parent_tag_probs, arc_nll, tag_nll
+        child_arc_loss = F.binary_cross_entropy_with_logits(child_scores, child_arcs.float(), reduction="none")
+        child_arc_loss = (child_arc_loss * mrc_mask.float()).sum() / mrc_mask.float().sum()
+        child_tag_loss = F.cross_entropy(child_tag_scores.view(batch_size*seq_len, -1),
+                                         child_tags.view(-1), reduction="none")
+        child_tag_loss = (child_tag_loss * child_arcs.float().view(-1)).sum() / (child_arcs.float().sum() + 1e8)
+
+        return parent_probs, parent_tag_probs, child_probs, child_tag_probs, parent_arc_nll, parent_tag_nll, child_arc_loss, child_tag_loss
 
     def get_word_embedding(
         self,
