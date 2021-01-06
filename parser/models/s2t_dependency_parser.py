@@ -1,47 +1,50 @@
 import logging
 from copy import deepcopy
-from typing import Dict, Optional
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
+from allennlp.modules import FeedForward
 from allennlp.modules import InputVariationalDropout
+from allennlp.modules.matrix_attention.bilinear_matrix_attention import BilinearMatrixAttention
 from allennlp.modules.seq2seq_encoders.pytorch_seq2seq_wrapper import StackedBidirectionalLstmSeq2SeqEncoder
+from allennlp.nn import Activation
 from allennlp.nn import util as allennlp_util
-from allennlp.nn.util import (
-    get_device_of,
-)
-from allennlp.nn.util import get_range_vector
 from overrides import overrides
 from torch import nn
 from transformers import BertModel, BertPreTrainedModel
 from transformers.modeling_bert import BertEncoder
 
-from parser.models.t2t_dependency_config import BertMrcT2TDependencyConfig
+from parser.models.s2t_dependency_config import BertMrcS2TDependencyConfig
 
 logger = logging.getLogger(__name__)
 
 
-class BiaffineDependencyT2TParser(BertPreTrainedModel):
+class BiaffineDependencyS2TParser(BertPreTrainedModel):
     """
     This dependency parser follows the model of
     [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)]
     (https://arxiv.org/abs/1611.01734) .
-    But We use token-to-token MRC to extract parent and labels
+    But We use span-to-token MRC to extract parent and labels
     """
 
-    def __init__(self, config: BertMrcT2TDependencyConfig):
+    def __init__(self, config: BertMrcS2TDependencyConfig):
         super().__init__(config)
 
         self.config = config
 
         num_dep_labels = len(config.dep_tags)
         num_pos_labels = len(config.pos_tags)
-        hidden_size = config.additional_layer_dim
+        hidden_size = config.additional_layer_dim if config.additional_layer > 0 else config.pos_dim + config.hidden_size
 
         if config.pos_dim > 0:
             self.pos_embedding = nn.Embedding(num_pos_labels, config.pos_dim)
             nn.init.xavier_uniform_(self.pos_embedding.weight)
-            if config.additional_layer_type != "lstm" and config.pos_dim+config.hidden_size != hidden_size:
+            if (
+                config.additional_layer
+                and config.additional_layer_type != "lstm"
+                and config.pos_dim+config.hidden_size != hidden_size
+            ):
                 self.fuse_layer = nn.Linear(config.pos_dim+config.hidden_size, hidden_size)
                 nn.init.xavier_uniform_(self.fuse_layer.weight)
                 self.fuse_layer.bias.data.zero_()
@@ -71,15 +74,20 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
 
         else:
             self.additional_encoder = None
-        # todo try re-init with xavier-uniform and bias=0
-        self.parent_feedforward = nn.Linear(hidden_size, 1)
-        self.parent_tag_feedforward = nn.Linear(hidden_size, num_dep_labels)
-
-        self.child_feedforward = nn.Linear(hidden_size, 1)
-        self.child_tag_feedforward = nn.Linear(hidden_size, num_dep_labels)
 
         # self.mrc_dropout = nn.Dropout(config.mrc_dropout)
         self._dropout = InputVariationalDropout(config.mrc_dropout)
+
+        self.subtree_start_feedforward = FeedForward(
+            hidden_size, 1, config.arc_representation_dim, Activation.by_name("elu")()
+        )
+        self.subtree_end_feedforward = deepcopy(self.subtree_start_feedforward)
+
+        # todo: equivalent to self-attention?
+        self.subtree_start_attention = BilinearMatrixAttention(
+            config.arc_representation_dim, config.arc_representation_dim, use_input_biases=True
+        )
+        self.subtree_end_attention = deepcopy(self.subtree_start_attention)
 
         # init linear children
         for layer in self.children():
@@ -107,13 +115,9 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
         type_ids: torch.LongTensor,
         offsets: torch.LongTensor,
         wordpiece_mask: torch.BoolTensor,
-        span_idx: torch.LongTensor,
-        span_tag: torch.LongTensor,
-        child_arcs: torch.LongTensor,
-        child_tags: torch.LongTensor,
         pos_tags: torch.LongTensor,
         word_mask: torch.BoolTensor,
-        mrc_mask: torch.BoolTensor,
+        subtree_spans: torch.LongTensor = None,
     ):
         """  todo implement docstring
         Args:
@@ -121,18 +125,13 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
             type_ids: [batch_size, num_word_pieces]
             offsets: [batch_size, num_words, 2]
             wordpiece_mask: [batch_size, num_word_pieces]
-            span_idx: [batch_size, 2]
-            span_tag: [batch_size, 1]
-            child_arcs: [batch_size, num_words]
-            child_tags: [batch_size, num_words]
             pos_tags: [batch_size, num_words]
             word_mask: [batch_size, num_words]
-            mrc_mask: [batch_size, num_words]
+            subtree_spans: [batch_size, num_words, 2]
         Returns:
-            parent_probs: [batch_size, num_word]
-            parent_tag_probs: [batch_size, num_words]
-            arc_nll: [1]
-            tag_nll: [1]
+            span_start_probs: [batch_size, num_words, num_words]
+            span_end_probs: [batch_size, num_words, num_words]
+            loss(if subtree_spans is not None)
         """
 
         embedded_text_input = self.get_word_embedding(
@@ -164,47 +163,34 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
 
         batch_size, seq_len, encoding_dim = encoded_text.size()
 
-        # shape (batch_size, sequence_length, tag_classes)
-        parent_tag_scores = self.parent_tag_feedforward(encoded_text)
-        # shape (batch_size, sequence_length)
-        parent_scores = self.parent_feedforward(encoded_text).squeeze(-1)
+        # [bsz, seq_len, dim]
+        subtree_start_representation = self._dropout(self.subtree_start_feedforward(encoded_text))
+        subtree_end_representation = self._dropout(self.subtree_end_feedforward(encoded_text))
+        # [bsz, seq_len, seq_len]
+        span_start_scores = self.subtree_start_attention(subtree_start_representation, subtree_start_representation)
+        span_end_scores = self.subtree_end_attention(subtree_end_representation, subtree_end_representation)
 
-        # [bsz, seq_len, tag_classes]
-        child_tag_scores = self.child_tag_feedforward(encoded_text)
-        # [bsz, seq_len]
-        child_scores = self.child_feedforward(encoded_text).squeeze(-1)
+        # start of word should less equal to it
+        start_mask = word_mask.unsqueeze(-1) & (~torch.triu(span_start_scores.bool(), 1))
+        # end of word should greater equal to it.
+        end_mask = word_mask.unsqueeze(-1) & torch.triu(span_end_scores.bool())
 
-        # todo support cases that span_idx and span_tag are None
-        # [bsz]
-        batch_range_vector = get_range_vector(batch_size, get_device_of(encoded_text))
-        # [bsz]
-        gold_positions = span_idx[:, 0]
-
-        # compute parent arc loss
         minus_inf = -1e8
-        mrc_mask = torch.logical_and(mrc_mask, word_mask)
-        parent_scores = parent_scores + (~mrc_mask).float() * minus_inf
-        child_scores = child_scores + (~mrc_mask).float() * minus_inf
+        span_start_scores = span_start_scores + (~start_mask).float() * minus_inf
+        span_end_scores = span_end_scores + (~end_mask).float() * minus_inf
 
-        # [bsz, seq_len]
-        parent_logits = F.log_softmax(parent_scores, dim=-1)
-        parent_arc_nll = -parent_logits[batch_range_vector, gold_positions].mean()
+        output = (span_start_scores, span_end_scores)
 
-        # compute parent tag loss
-        parent_tag_nll = F.cross_entropy(parent_tag_scores[batch_range_vector, gold_positions], span_tag)
+        if subtree_spans is not None:
 
-        parent_probs = F.softmax(parent_scores, dim=-1)
-        parent_tag_probs = F.softmax(parent_tag_scores, dim=-1)
-        child_probs = F.sigmoid(child_scores)
-        child_tag_probs = F.softmax(child_tag_scores, dim=-1)
+            start_loss = F.cross_entropy(span_start_scores.view(batch_size*seq_len, -1),
+                                         subtree_spans[:, :, 0].view(-1))
+            end_loss = F.cross_entropy(span_end_scores.view(batch_size*seq_len, -1),
+                                       subtree_spans[:, :, 1].view(-1))
+            loss = start_loss + end_loss
+            output = output + (loss, )
 
-        child_arc_loss = F.binary_cross_entropy_with_logits(child_scores, child_arcs.float(), reduction="none")
-        child_arc_loss = (child_arc_loss * mrc_mask.float()).sum() / mrc_mask.float().sum()
-        child_tag_loss = F.cross_entropy(child_tag_scores.view(batch_size*seq_len, -1),
-                                         child_tags.view(-1), reduction="none")
-        child_tag_loss = (child_tag_loss * child_arcs.float().view(-1)).sum() / (child_arcs.float().sum() + 1e8)
-
-        return parent_probs, parent_tag_probs, child_probs, child_tag_probs, parent_arc_nll, parent_tag_nll, child_arc_loss, child_tag_loss
+        return output
 
     def get_word_embedding(
         self,
@@ -238,16 +224,14 @@ if __name__ == '__main__':
     from transformers import BertConfig
     bert_path = "/data/nfsdata2/nlp_application/models/bert/bert-large-cased"
     bert_config = BertConfig.from_pretrained(bert_path)
-    bert_dep_config = BertMrcT2TDependencyConfig(
+    bert_dep_config = BertMrcS2TDependencyConfig(
         pos_tags=[f"pos_{i}" for i in range(5)],
         dep_tags=[f"dep_{i}" for i in range(5)],
-        additional_layer=3,
-        additional_layer_dim=800,
         pos_dim=100,
         mrc_dropout=0.3,
         **bert_config.__dict__
     )
-    mrc_dep = BiaffineDependencyT2TParser.from_pretrained(
+    mrc_dep = BiaffineDependencyS2TParser.from_pretrained(
         bert_path,
         config=bert_dep_config,
     )
@@ -257,22 +241,16 @@ if __name__ == '__main__':
 
     token_ids = type_ids = wordpiece_mask = torch.ones([bsz, num_word_pieces], dtype=torch.long)
     wordpiece_mask = wordpiece_mask.bool()
-    offsets = torch.ones([bsz, num_words, 2], dtype=torch.long)
-    span_idx = torch.ones([bsz, 2], dtype=torch.long)
-    span_tag = torch.ones([bsz], dtype=torch.long)
-    child_arcs = child_labels = pos_tags = torch.ones([bsz, num_words], dtype=torch.long)
-    mrc_mask = word_mask = pos_tags.bool()
+    subtree_spans = offsets = torch.ones([bsz, num_words, 2], dtype=torch.long)
+    pos_tags = torch.ones([bsz, num_words], dtype=torch.long)
+    word_mask = pos_tags.bool()
     y = mrc_dep(
         token_ids,
         type_ids,
         offsets,
         wordpiece_mask,
-        span_idx,
-        span_tag,
-        child_arcs,
-        child_labels,
         pos_tags,
-        mrc_mask,
-        word_mask
+        word_mask,
+        subtree_spans
     )
     print(y)

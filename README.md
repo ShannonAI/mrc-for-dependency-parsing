@@ -5,6 +5,7 @@ Codes for dependency parsing, including following models:
     -[ ] try better init
     -[ ] add backward score
     -[ ] add biaffine struct
+    -[ ] change bracket special token from [SEP] to other [unused]
     
 
 ## Requirements
