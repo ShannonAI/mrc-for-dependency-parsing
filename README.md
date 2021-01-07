@@ -4,7 +4,7 @@ Codes for dependency parsing, including following models:
 1. (developing) Token-to-Token Mrc Dependency parsing
     -[x] try better init
     -[x] add backward score
-    -[ ] add biaffine struct
+    -[ ] add biaffine struct/multi-layer
     -[ ] change bracket special token from [SEP] to other [unused]
     -[ ] use mst, fix multi-gpu mst
     -[ ] change type-id of [SEP]
@@ -35,4 +35,5 @@ Note that you should change `MODEL_DIR` and `BERT_DIR` to your own path.
 
 
 ## TODO
--[ ] refactor dataset reader, add base class and put collate_fn in corresponding file.
+-[x] refactor dataset reader, add base class and put collate_fn in corresponding file.
+-[ ] refactor config/argparser hyper-parameters 

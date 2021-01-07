@@ -71,22 +71,27 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
 
         else:
             self.additional_encoder = None
-        # todo try re-init with xavier-uniform and bias=0
-        self.parent_feedforward = nn.Linear(hidden_size, 1)
-        self.parent_tag_feedforward = nn.Linear(hidden_size, num_dep_labels)
 
-        self.child_feedforward = nn.Linear(hidden_size, 1)
-        self.child_tag_feedforward = nn.Linear(hidden_size, num_dep_labels)
+        self.parent_feedforward = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.GELU(),
+            InputVariationalDropout(config.mrc_dropout),
+            nn.Linear(hidden_size // 2, 1),
+        )
+
+        self.parent_tag_feedforward = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.GELU(),
+            InputVariationalDropout(config.mrc_dropout),
+            nn.Linear(hidden_size // 2, num_dep_labels),
+        )
+
+        self.child_feedforward = deepcopy(self.parent_feedforward)
+        self.child_tag_feedforward = deepcopy(self.parent_tag_feedforward)
 
         # self.mrc_dropout = nn.Dropout(config.mrc_dropout)
         self._dropout = InputVariationalDropout(config.mrc_dropout)
-
-        # init linear children
-        for layer in self.children():
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight)
-                if layer.bias is not None:
-                    layer.bias.data.zero_()
+        # todo renit feedforward?
 
     def _init_bert_weights(self, module):
         """ Initialize the weights. copy from transformers.BertPreTrainedModel"""

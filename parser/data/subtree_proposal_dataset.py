@@ -19,7 +19,7 @@ import numpy as np
 import torch
 from allennlp.data.token_indexers import PretrainedTransformerIndexer
 from conllu import parse_incr
-from torch.utils.data import Dataset
+from parser.data.base_bert_dataset import BaseDataset
 from parser.data.samplers.grouped_sampler import create_lengths_groups
 from parser.data.tree_utils import build_subtree_spans
 
@@ -28,20 +28,20 @@ from parser.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-class SubTreeProposalDataset(Dataset):
+class SubTreeProposalDataset(BaseDataset):
     """
-    Reads a file in the conllu/conllx Dependencies format.
-    Build dataset that propose subtree spans of each sentence.
-    # Parameters
-    file_path: conllu/conllx format dataset
-    use_language_specific_pos : `bool`, optional (default = `False`)
-        Whether to use UD POS tags, or to use the language specific POS tags
-        provided in the conllu format.
-    tokenizer : `BertTokenizer`, optional (default = `None`)
-        A tokenizer to use to split the text. This is useful when the tokens that you pass
-        into the model need to have some particular attribute. Typically it is not necessary.
+    Depency Dataset used for Span-to-Token MRC at Stage1.
+    In Stage one, we want to extract every subtree span whose root was each token
+
+    Args:
+        file_path: conllu/conllx format dataset
+        bert: bert directory path
+        use_language_specific_pos : `bool`, optional (default = `False`)
+            Whether to use UD POS tags, or to use the language specific POS tags
+            provided in the conllu format.
+        pos_tags: if specified, directly use it instead of counting POS tags from file
+        dep_tags: if specified, directly use it instead of counting dependency tags from file
     """
-    POS_TO_IGNORE = {"`", "''", ":", ",", ".", "PU", "PUNCT", "SYM"}
 
     def __init__(
         self,
@@ -50,56 +50,8 @@ class SubTreeProposalDataset(Dataset):
         use_language_specific_pos: bool = False,
         pos_tags: List[str] = None,
         dep_tags: List[str] = None,
-        **kwargs,
     ) -> None:
-        super().__init__(**kwargs)
-        self.use_language_specific_pos = use_language_specific_pos
-        self.file_path = file_path
-        self.data = []  # list of (words, pos_tags, dp_tags, dp_heads)
-        with open(file_path, "r") as conllu_file:
-            logger.info(f"Reading sentences from conll dataset at: {file_path} ...")
-            for ann_idx, annotation in enumerate(parse_incr(conllu_file)):
-                annotation = [x for x in annotation if isinstance(x["id"], int)]
-
-                dp_heads = [x["head"] for x in annotation]
-                dp_tags = [x["deprel"] for x in annotation]
-                words = [x["form"] for x in annotation]
-                if self.use_language_specific_pos:
-                    sample_pos_tags = [x["xpostag"] for x in annotation]
-                else:
-                    sample_pos_tags = [x["upostag"] for x in annotation]
-                self.data.append((words, sample_pos_tags, dp_tags, dp_heads))
-
-            logger.info(f"Read {len(self.data)} sentences from conllu dataset at: %s", file_path)
-
-        self.pos_tags = pos_tags or self.build_label_vocab(chain(*[d[1] for d in self.data]))
-        self.pos_tag_2idx = {l: idx for idx, l in enumerate(self.pos_tags)}
-        self.dep_tags = dep_tags or self.build_label_vocab(chain(*[d[2] for d in self.data]))
-        self.dep_tag_2idx = {l: idx for idx, l in enumerate(self.dep_tags)}
-        logger.info(f"pos tags: {self.pos_tag_2idx}")
-        logger.info(f"dep tags: {self.dep_tag_2idx}")
-
-        self._matched_indexer = PretrainedTransformerIndexer(model_name=bert)
-        self._allennlp_tokenizer = self._matched_indexer._allennlp_tokenizer
-
-    @staticmethod
-    def build_label_vocab(labels: Iterable[str]):
-        """build label to tag dictionay"""
-        labels_set = set()
-        for l in labels:
-            labels_set.add(l)
-        label_list = sorted(list(labels_set))
-        return label_list
-
-    @property
-    def ignore_pos_tags(self):
-        punctuation_tag_indices = {
-            tag: index for index, tag in enumerate(self.pos_tags) if tag in self.POS_TO_IGNORE
-        }
-        return set(punctuation_tag_indices.values())
-
-    def __len__(self):
-        return len(self.data)
+        super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
 
     def __getitem__(self, idx):
         """
@@ -133,51 +85,6 @@ class SubTreeProposalDataset(Dataset):
         }
 
         return fields
-
-    def get_mismatch_token_idx(self, words: List[str]):
-        """
-        splits the words into wordpieces. We want to embed these wordpieces and then pull out a single
-        vector for each original word.
-        For reference: pretrained_transformer_mismatched indexer of AllenNLP
-        """
-        # todo(yuxian): this line is extremely slow, need optimization
-        wordpieces, offsets = self._allennlp_tokenizer.intra_word_tokenize(words)
-
-        # For tokens that don't correspond to any word pieces, we put (-1, -1) into the offsets.
-        # That results in the embedding for the token to be all zeros.
-        offsets = [x if x is not None else (-1, -1) for x in offsets]
-
-        output = {
-            "token_ids": torch.LongTensor([t.text_id for t in wordpieces]),
-            "word_mask": torch.BoolTensor([True] * len(words)),  # for original tokens (i.e. word-level)
-            "offsets": torch.LongTensor(offsets),
-            "wordpiece_mask": torch.BoolTensor([True] * len(wordpieces)),  # for wordpieces (i.e. subword-level)
-        }
-        return output
-
-    def get_groups(self, max_length=128, cache=True):
-        """get groups, used for GroupSampler"""
-        success = False
-        if cache:
-            group_save_path = self.file_path + ".groups.npy"
-            counts_save_path = self.file_path + ".groups_counts.npy"
-            try:
-                logger.info("Loading pre-computed groups")
-                counts = np.load(counts_save_path)
-                groups = np.load(group_save_path)
-                assert len(groups) == len(self), \
-                f"number of group_idxs {len(groups)} should have same length as dataset: {len(self)}"
-                success = True
-            except Exception as e:
-                logger.error(f"Loading pre-computed groups from {group_save_path} failed", exc_info=1)
-        if not success:
-            logger.info("Re-computing groups")
-            groups, counts = create_lengths_groups(lengths=[len(x[0]) for x in self.data],
-                                                   max_length=max_length)
-            np.save(group_save_path, groups)
-            np.save(counts_save_path, counts)
-            logger.info(f"Groups info save to {group_save_path}")
-        return groups, counts
 
 
 def collate_subtree_data(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:

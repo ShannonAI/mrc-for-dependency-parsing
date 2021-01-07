@@ -17,8 +17,7 @@ from allennlp.nn.util import get_range_vector, get_device_of
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
 from transformers import BertConfig, AdamW
-from parser.data.collate import collate_dependency_t2t_data
-from parser.data.dependency_t2t_reader import DependencyT2TDataset
+from parser.data.dependency_t2t_reader import DependencyT2TDataset, collate_dependency_t2t_data
 from parser.metrics import *
 from parser.models import *
 from parser.callbacks import *

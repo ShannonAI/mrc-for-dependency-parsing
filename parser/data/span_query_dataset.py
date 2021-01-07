@@ -11,44 +11,44 @@
 """
 
 
-from itertools import chain
-from typing import List, Iterable, Dict
-from collections import defaultdict
 from copy import deepcopy
-import numpy as np
-import torch
-from allennlp.data.token_indexers import PretrainedTransformerIndexer
-from conllu import parse_incr
-from torch.utils.data import Dataset
-from parser.data.samplers.grouped_sampler import create_lengths_groups
-from parser.data.tree_utils import build_subtree_spans
+from itertools import chain
+from typing import List, Dict
 
+import torch
+
+from parser.data.base_bert_dataset import BaseDataset
+from parser.data.tree_utils import build_subtree_spans
 from parser.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class SpanQueryDataset(Dataset):
+class SpanQueryDataset(BaseDataset):
     """
-    Reads a file in the conllu/conllx Dependencies format.
+    Depency Dataset used for Span-to-Token MRC
     Build dataset that use subtree-span to query its parent
-    # Parameters
-    file_path: conllu/conllx format dataset
-    use_language_specific_pos : `bool`, optional (default = `False`)
-        Whether to use UD POS tags, or to use the language specific POS tags
-        provided in the conllu format.
-    tokenizer : `BertTokenizer`, optional (default = `None`)
-        A tokenizer to use to split the text. This is useful when the tokens that you pass
-        into the model need to have some particular attribute. Typically it is not necessary.
-    """
-    POS_TO_IGNORE = {"`", "''", ":", ",", ".", "PU", "PUNCT", "SYM"}
 
-    SPAN_START = "[SEP]"  # todo 用[unused0]，但目前tokenizers的问题会把[unused0]转换为[,unused,##0,]
-    SPAN_END = "[SEP]"
-    SUBTREE_ROOT_START = "[SEP]"
-    SUBTREE_ROOT_END = "[SEP]"
+    Args:
+        file_path: conllu/conllx format dataset
+        bert: bert directory path
+        use_language_specific_pos : `bool`, optional (default = `False`)
+            Whether to use UD POS tags, or to use the language specific POS tags
+            provided in the conllu format.
+        pos_tags: if specified, directly use it instead of counting POS tags from file
+        dep_tags: if specified, directly use it instead of counting dependency tags from file
+    """
+
+    # we use [unused0] ~ [unused3] in bert vocab to represent bracket around query token and query span
+    SPAN_START = 1
+    SUBTREE_ROOT_START = 2
+    SUBTREE_ROOT_END = 3
+    SPAN_END = 4
+
     SEP_POS = "sep_pos"
     SEP = "[SEP]"
+
+    group_file_suffix = ".mrc"
 
     def __init__(
         self,
@@ -57,39 +57,19 @@ class SpanQueryDataset(Dataset):
         use_language_specific_pos: bool = False,
         pos_tags: List[str] = None,
         dep_tags: List[str] = None,
-        **kwargs,
     ) -> None:
-        super().__init__(**kwargs)
-        self.use_language_specific_pos = use_language_specific_pos
-        self.file_path = file_path
-        self.data = []  # list of (words, pos_tags, dp_tags, dp_heads)
-        with open(file_path, "r") as conllu_file:
-            logger.info(f"Reading sentences from conll dataset at: {file_path} ...")
-            for ann_idx, annotation in enumerate(parse_incr(conllu_file)):
-                annotation = [x for x in annotation if isinstance(x["id"], int)]
+        super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
 
-                dp_heads = [x["head"] for x in annotation]
-                dp_tags = [x["deprel"] for x in annotation]
-                words = [x["form"] for x in annotation]
-                if self.use_language_specific_pos:
-                    sample_pos_tags = [x["xpostag"] for x in annotation]
-                else:
-                    sample_pos_tags = [x["upostag"] for x in annotation]
-                self.data.append((words, sample_pos_tags, dp_tags, dp_heads, build_subtree_spans(dp_heads)))
+        for d in self.data:
+            d.append(build_subtree_spans(dp_heads=d[3]))
 
-            self.offsets = self.build_offsets()
-            logger.info(f"Read {len(self.data)} sentences with "
-                        f"{len(self.offsets)} mrc-samples from conll dataset at: {file_path}")
+        self.offsets = self.build_offsets()
+        logger.info(f"build {len(self.offsets)} mrc-samples from {file_path}")
 
         self.pos_tags = pos_tags or self.build_label_vocab(chain(*[d[1] for d in self.data], [self.SEP_POS]))
         self.pos_tag_2idx = {l: idx for idx, l in enumerate(self.pos_tags)}
-        self.dep_tags = dep_tags or self.build_label_vocab(chain(*[d[2] for d in self.data]))
-        self.dep_tag_2idx = {l: idx for idx, l in enumerate(self.dep_tags)}
         logger.info(f"pos tags: {self.pos_tag_2idx}")
         logger.info(f"dep tags: {self.dep_tag_2idx}")
-
-        self._matched_indexer = PretrainedTransformerIndexer(model_name=bert)
-        self._allennlp_tokenizer = self._matched_indexer._allennlp_tokenizer
 
     def build_offsets(self):
         """offsets[i] = (sent_idx, word_idx) of ith mrc-samples."""
@@ -99,22 +79,6 @@ class SpanQueryDataset(Dataset):
             for word_idx in range(len(words)):
                 offsets.append((ann_idx, word_idx))
         return offsets
-
-    @staticmethod
-    def build_label_vocab(labels: Iterable[str]):
-        """build label to tag dictionay"""
-        labels_set = set()
-        for l in labels:
-            labels_set.add(l)
-        label_list = sorted(list(labels_set))
-        return label_list
-
-    @property
-    def ignore_pos_tags(self):
-        punctuation_tag_indices = {
-            tag: index for index, tag in enumerate(self.pos_tags) if tag in self.POS_TO_IGNORE
-        }
-        return set(punctuation_tag_indices.values())
 
     def __len__(self):
         return len(self.offsets)
@@ -146,12 +110,18 @@ class SpanQueryDataset(Dataset):
         fields = {"type_ids": torch.LongTensor(type_ids)}
 
         query_tokens = deepcopy(words) + [self.SEP]
-        query_tokens.insert(span_start, self.SPAN_START)
-        query_tokens.insert(word_idx + 1, self.SUBTREE_ROOT_START)
-        query_tokens.insert(word_idx + 3, self.SUBTREE_ROOT_END)
-        query_tokens.insert(span_end + 4, self.SPAN_END)
+        query_tokens.insert(span_start, self.SEP)
+        query_tokens.insert(word_idx + 1, self.SEP)
+        query_tokens.insert(word_idx + 3, self.SEP)
+        query_tokens.insert(span_end + 4, self.SEP)
         mrc_tokens = query_tokens + words
+
         bert_mismatch_fields = self.get_mismatch_token_idx(mrc_tokens)
+        self.replace_special_token(bert_mismatch_fields, [span_start], self.SPAN_START)
+        self.replace_special_token(bert_mismatch_fields, [word_idx+1], self.SUBTREE_ROOT_START)
+        self.replace_special_token(bert_mismatch_fields, [word_idx+3], self.SUBTREE_ROOT_END)
+        self.replace_special_token(bert_mismatch_fields, [span_end+4], self.SPAN_END)
+
         fields.update(bert_mismatch_fields)
 
         query_pos_tags = pos_tags.copy() + [self.SEP_POS]
@@ -181,52 +151,6 @@ class SpanQueryDataset(Dataset):
         }
 
         return fields
-
-    def get_mismatch_token_idx(self, words: List[str]):
-        """
-        splits the words into wordpieces. We want to embed these wordpieces and then pull out a single
-        vector for each original word.
-        For reference: pretrained_transformer_mismatched indexer of AllenNLP
-        """
-        # todo(yuxian): this line is extremely slow, need optimization
-        wordpieces, offsets = self._allennlp_tokenizer.intra_word_tokenize(words)
-
-        # For tokens that don't correspond to any word pieces, we put (-1, -1) into the offsets.
-        # That results in the embedding for the token to be all zeros.
-        offsets = [x if x is not None else (-1, -1) for x in offsets]
-
-        output = {
-            "token_ids": torch.LongTensor([t.text_id for t in wordpieces]),
-            "word_mask": torch.BoolTensor([True] * len(words)),  # for original tokens (i.e. word-level)
-            "offsets": torch.LongTensor(offsets),
-            "wordpiece_mask": torch.BoolTensor([True] * len(wordpieces)),  # for wordpieces (i.e. subword-level)
-        }
-        return output
-
-    def get_groups(self, max_length=128, cache=True):
-        """ge groups, used for GroupSampler"""
-        success = False
-        if cache:
-            group_save_path = self.file_path + ".mrc.groups.npy"
-            counts_save_path = self.file_path + ".mrc.groups_counts.npy"
-            try:
-                logger.info("Loading pre-computed groups")
-                counts = np.load(counts_save_path)
-                groups = np.load(group_save_path)
-                assert len(groups) == len(self), \
-                f"number of group_idxs {len(groups)} should have same length as dataset: {len(self)}"
-                success = True
-            except Exception as e:
-                logger.error(f"Loading pre-computed groups from {group_save_path} failed", exc_info=1)
-        if not success:
-            logger.info("Re-computing groups")
-            groups, counts = create_lengths_groups(lengths=self._get_item_lengths(),
-                                                   max_length=max_length)
-            np.save(group_save_path, groups)
-            np.save(counts_save_path, counts)
-            logger.info(f"Groups info save to {group_save_path}")
-
-        return groups, counts
 
     def _get_item_lengths(self) -> List[int]:
         """get seqence-length of every item"""

@@ -17,8 +17,7 @@ import torch
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
 from transformers import BertConfig, AdamW
-from parser.data.collate import collate_dependency_data
-from parser.data.dependency_reader import DependencyDataset
+from parser.data.dependency_reader import DependencyDataset, collate_dependency_data
 from parser.metrics import *
 from parser.models import *
 from parser.callbacks import *
