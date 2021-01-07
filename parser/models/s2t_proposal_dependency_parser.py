@@ -15,12 +15,12 @@ from torch import nn
 from transformers import BertModel, BertPreTrainedModel
 from transformers.modeling_bert import BertEncoder
 
-from parser.models.s2t_dependency_config import BertMrcS2TDependencyConfig
+from parser.models.s2t_proposal_dependency_config import BertMrcS2TProposalDependencyConfig
 
 logger = logging.getLogger(__name__)
 
 
-class BiaffineDependencyS2TParser(BertPreTrainedModel):
+class BiaffineDependencyS2TProposalParser(BertPreTrainedModel):
     """
     This dependency parser follows the model of
     [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)]
@@ -28,7 +28,7 @@ class BiaffineDependencyS2TParser(BertPreTrainedModel):
     But We use span-to-token MRC to extract parent and labels
     """
 
-    def __init__(self, config: BertMrcS2TDependencyConfig):
+    def __init__(self, config: BertMrcS2TProposalDependencyConfig):
         super().__init__(config)
 
         self.config = config
@@ -224,14 +224,14 @@ if __name__ == '__main__':
     from transformers import BertConfig
     bert_path = "/data/nfsdata2/nlp_application/models/bert/bert-large-cased"
     bert_config = BertConfig.from_pretrained(bert_path)
-    bert_dep_config = BertMrcS2TDependencyConfig(
+    bert_dep_config = BertMrcS2TProposalDependencyConfig(
         pos_tags=[f"pos_{i}" for i in range(5)],
         dep_tags=[f"dep_{i}" for i in range(5)],
         pos_dim=100,
         mrc_dropout=0.3,
         **bert_config.__dict__
     )
-    mrc_dep = BiaffineDependencyS2TParser.from_pretrained(
+    mrc_dep = BiaffineDependencyS2TProposalParser.from_pretrained(
         bert_path,
         config=bert_dep_config,
     )

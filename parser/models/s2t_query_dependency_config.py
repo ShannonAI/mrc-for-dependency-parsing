@@ -12,9 +12,9 @@ from typing import List
 from transformers import BertConfig
 
 
-class BertMrcS2TDependencyConfig(BertConfig):
+class BertMrcS2TQueryDependencyConfig(BertConfig):
     def __init__(self, pos_tags: List[str], dep_tags: List[str], **kwargs):
-        super(BertMrcS2TDependencyConfig, self).__init__(**kwargs)
+        super(BertMrcS2TQueryDependencyConfig, self).__init__(**kwargs)
         self.pos_tags = pos_tags
         self.dep_tags = dep_tags
         self.pos_dim = kwargs.get("pos_dim", 0)
@@ -22,4 +22,3 @@ class BertMrcS2TDependencyConfig(BertConfig):
         self.additional_layer = kwargs.get("additional_layer", 0)
         self.additional_layer_type = kwargs.get("additional_layer_type", "lstm")
         self.additional_layer_dim = kwargs.get("additional_layer_dim", self.hidden_size) or self.hidden_size
-        self.arc_representation_dim = kwargs.get("arc_representation_dim", self.hidden_size)
