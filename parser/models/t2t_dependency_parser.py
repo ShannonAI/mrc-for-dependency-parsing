@@ -202,7 +202,7 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
         child_arc_loss = (child_arc_loss * mrc_mask.float()).sum() / mrc_mask.float().sum()
         child_tag_loss = F.cross_entropy(child_tag_scores.view(batch_size*seq_len, -1),
                                          child_tags.view(-1), reduction="none")
-        child_tag_loss = (child_tag_loss * child_arcs.float().view(-1)).sum() / (child_arcs.float().sum() + 1e8)
+        child_tag_loss = (child_tag_loss * child_arcs.float().view(-1)).sum() / (child_arcs.float().sum() + 1e-8)
 
         return parent_probs, parent_tag_probs, child_probs, child_tag_probs, parent_arc_nll, parent_tag_nll, child_arc_loss, child_tag_loss
 
