@@ -16,12 +16,12 @@ from torch import nn
 from transformers import BertModel, BertPreTrainedModel
 from transformers.modeling_bert import BertEncoder
 
-from parser.models.t2t_dependency_config import BertMrcT2TDependencyConfig
+from parser.models.s2t_query_dependency_config import BertMrcS2TQueryDependencyConfig
 
 logger = logging.getLogger(__name__)
 
 
-class BiaffineDependencyT2TParser(BertPreTrainedModel):
+class BiaffineDependencyS2TQeuryParser(BertPreTrainedModel):
     """
     This dependency parser follows the model of
     [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)]
@@ -29,7 +29,7 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
     But We use token-to-token MRC to extract parent and labels
     """
 
-    def __init__(self, config: BertMrcT2TDependencyConfig):
+    def __init__(self, config: BertMrcS2TQueryDependencyConfig):
         super().__init__(config)
 
         self.config = config
@@ -72,26 +72,21 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
         else:
             self.additional_encoder = None
 
-        self.parent_feedforward = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.GELU(),
-            InputVariationalDropout(config.mrc_dropout),
-            nn.Linear(hidden_size // 2, 1),
-        )
+        self.parent_feedforward = nn.Linear(hidden_size, 1)
+        self.parent_tag_feedforward = nn.Linear(hidden_size, num_dep_labels)
 
-        self.parent_tag_feedforward = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
-            nn.GELU(),
-            InputVariationalDropout(config.mrc_dropout),
-            nn.Linear(hidden_size // 2, num_dep_labels),
-        )
-
-        self.child_feedforward = deepcopy(self.parent_feedforward)
-        self.child_tag_feedforward = deepcopy(self.parent_tag_feedforward)
+        # self.child_feedforward = nn.Linear(hidden_size, 1)
+        # self.child_tag_feedforward = nn.Linear(hidden_size, num_dep_labels)
 
         # self.mrc_dropout = nn.Dropout(config.mrc_dropout)
         self._dropout = InputVariationalDropout(config.mrc_dropout)
-        # todo renit feedforward?
+
+        # init linear children
+        for layer in self.children():
+            if isinstance(layer, nn.Linear):
+                nn.init.xavier_uniform_(layer.weight)
+                if layer.bias is not None:
+                    layer.bias.data.zero_()
 
     def _init_bert_weights(self, module):
         """ Initialize the weights. copy from transformers.BertPreTrainedModel"""
@@ -112,13 +107,11 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
         type_ids: torch.LongTensor,
         offsets: torch.LongTensor,
         wordpiece_mask: torch.BoolTensor,
-        span_idx: torch.LongTensor,
-        span_tag: torch.LongTensor,
-        child_arcs: torch.LongTensor,
-        child_tags: torch.LongTensor,
         pos_tags: torch.LongTensor,
         word_mask: torch.BoolTensor,
         mrc_mask: torch.BoolTensor,
+        parent_idxs: torch.LongTensor = None,
+        parent_tags: torch.LongTensor = None
     ):
         """  todo implement docstring
         Args:
@@ -126,18 +119,16 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
             type_ids: [batch_size, num_word_pieces]
             offsets: [batch_size, num_words, 2]
             wordpiece_mask: [batch_size, num_word_pieces]
-            span_idx: [batch_size, 2]
-            span_tag: [batch_size, 1]
-            child_arcs: [batch_size, num_words]
-            child_tags: [batch_size, num_words]
             pos_tags: [batch_size, num_words]
             word_mask: [batch_size, num_words]
             mrc_mask: [batch_size, num_words]
+            parent_idxs: [batch_size]
+            parent_tags: [batch_size]
         Returns:
             parent_probs: [batch_size, num_word]
             parent_tag_probs: [batch_size, num_words]
-            arc_nll: [1]
-            tag_nll: [1]
+            arc_loss (if parent_idx is not None)
+            tag_loss (if parent_idxs and parent_tags are not None)
         """
 
         embedded_text_input = self.get_word_embedding(
@@ -174,42 +165,30 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
         # shape (batch_size, sequence_length)
         parent_scores = self.parent_feedforward(encoded_text).squeeze(-1)
 
-        # [bsz, seq_len, tag_classes]
-        child_tag_scores = self.child_tag_feedforward(encoded_text)
-        # [bsz, seq_len]
-        child_scores = self.child_feedforward(encoded_text).squeeze(-1)
-
-        # todo support cases that span_idx and span_tag are None
-        # [bsz]
-        batch_range_vector = get_range_vector(batch_size, get_device_of(encoded_text))
-        # [bsz]
-        gold_positions = span_idx[:, 0]
-
-        # compute parent arc loss
+        # mask out impossible positions
         minus_inf = -1e8
         mrc_mask = torch.logical_and(mrc_mask, word_mask)
         parent_scores = parent_scores + (~mrc_mask).float() * minus_inf
-        child_scores = child_scores + (~mrc_mask).float() * minus_inf
-
-        # [bsz, seq_len]
-        parent_logits = F.log_softmax(parent_scores, dim=-1)
-        parent_arc_nll = -parent_logits[batch_range_vector, gold_positions].mean()
-
-        # compute parent tag loss
-        parent_tag_nll = F.cross_entropy(parent_tag_scores[batch_range_vector, gold_positions], span_tag)
 
         parent_probs = F.softmax(parent_scores, dim=-1)
         parent_tag_probs = F.softmax(parent_tag_scores, dim=-1)
-        child_probs = F.sigmoid(child_scores)
-        child_tag_probs = F.softmax(child_tag_scores, dim=-1)
 
-        child_arc_loss = F.binary_cross_entropy_with_logits(child_scores, child_arcs.float(), reduction="none")
-        child_arc_loss = (child_arc_loss * mrc_mask.float()).sum() / mrc_mask.float().sum()
-        child_tag_loss = F.cross_entropy(child_tag_scores.view(batch_size*seq_len, -1),
-                                         child_tags.view(-1), reduction="none")
-        child_tag_loss = (child_tag_loss * child_arcs.float().view(-1)).sum() / (child_arcs.float().sum() + 1e-8)
+        output = (parent_probs, parent_tag_probs)
 
-        return parent_probs, parent_tag_probs, child_probs, child_tag_probs, parent_arc_nll, parent_tag_nll, child_arc_loss, child_tag_loss
+        # (optional) add losses
+        if parent_idxs is not None:
+            # [bsz]
+            batch_range_vector = get_range_vector(batch_size, get_device_of(encoded_text))
+            # [bsz, seq_len]
+            parent_logits = F.log_softmax(parent_scores, dim=-1)
+            parent_arc_nll = -parent_logits[batch_range_vector, parent_idxs].mean()
+            output = output + (parent_arc_nll, )
+
+            if parent_tags is not None:
+                parent_tag_nll = F.cross_entropy(parent_tag_scores[batch_range_vector, parent_idxs], parent_tags)
+                output = output + (parent_tag_nll, )
+
+        return output
 
     def get_word_embedding(
         self,
@@ -243,7 +222,7 @@ if __name__ == '__main__':
     from transformers import BertConfig
     bert_path = "/data/nfsdata2/nlp_application/models/bert/bert-large-cased"
     bert_config = BertConfig.from_pretrained(bert_path)
-    bert_dep_config = BertMrcT2TDependencyConfig(
+    bert_dep_config = BertMrcS2TQueryDependencyConfig(
         pos_tags=[f"pos_{i}" for i in range(5)],
         dep_tags=[f"dep_{i}" for i in range(5)],
         additional_layer=3,
@@ -252,7 +231,7 @@ if __name__ == '__main__':
         mrc_dropout=0.3,
         **bert_config.__dict__
     )
-    mrc_dep = BiaffineDependencyT2TParser.from_pretrained(
+    mrc_dep = BiaffineDependencyS2TQeuryParser.from_pretrained(
         bert_path,
         config=bert_dep_config,
     )
@@ -263,21 +242,18 @@ if __name__ == '__main__':
     token_ids = type_ids = wordpiece_mask = torch.ones([bsz, num_word_pieces], dtype=torch.long)
     wordpiece_mask = wordpiece_mask.bool()
     offsets = torch.ones([bsz, num_words, 2], dtype=torch.long)
-    span_idx = torch.ones([bsz, 2], dtype=torch.long)
-    span_tag = torch.ones([bsz], dtype=torch.long)
-    child_arcs = child_labels = pos_tags = torch.ones([bsz, num_words], dtype=torch.long)
+    pos_tags = torch.ones([bsz, num_words], dtype=torch.long)
     mrc_mask = word_mask = pos_tags.bool()
+    parent_idxs = parent_tags = torch.ones([bsz], dtype=torch.long)
     y = mrc_dep(
         token_ids,
         type_ids,
         offsets,
         wordpiece_mask,
-        span_idx,
-        span_tag,
-        child_arcs,
-        child_labels,
         pos_tags,
         mrc_mask,
-        word_mask
+        word_mask,
+        parent_tags,
+        parent_idxs
     )
     print(y)

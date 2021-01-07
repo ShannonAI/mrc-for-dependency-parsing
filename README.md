@@ -1,7 +1,17 @@
 # parser
 Codes for dependency parsing, including following models:
 1. [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)](https://arxiv.org/abs/1611.01734) .
-1. (developing) Mrc Dependency parsing
+1. (developing) Token-to-Token Mrc Dependency parsing
+    -[x] try better init
+    -[x] add backward score
+    -[ ] add biaffine struct/multi-layer
+    -[ ] change bracket special token from [SEP] to other [unused]
+    -[ ] use mst, fix multi-gpu mst
+    -[ ] change type-id of [SEP]
+
+1. (developing) Span-to-Token MRC Dependency parsing
+    -[ ] allow no answer in second stage?
+    -[ ] add token-span query?
 
 ## Requirements
 * python>=3.6
@@ -20,3 +30,10 @@ Note that you should change `HPARAMS` and `CHECKPOINT` to your own path.
 #### Train
 See `scripts/t2t/train_ptb_freeze.sh`
 Note that you should change `MODEL_DIR` and `BERT_DIR` to your own path.
+
+### 3. Span-to-Token MRC (Developing)
+
+
+## TODO
+-[x] refactor dataset reader, add base class and put collate_fn in corresponding file.
+-[ ] refactor config/argparser hyper-parameters 

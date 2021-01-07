@@ -17,7 +17,7 @@ from allennlp.nn.util import get_range_vector, get_device_of
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
 from transformers import BertConfig, AdamW
-from parser.data.dependency_t2t_reader import DependencyT2TDataset, collate_dependency_t2t_data
+from parser.data.span_query_dataset import SpanQueryDataset, collate_s2t_data
 from parser.metrics import *
 from parser.models import *
 from parser.callbacks import *
@@ -28,7 +28,7 @@ from parser.data.samplers import GroupedSampler
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
-class MrcDependency(pl.LightningModule):
+class MrcS2TQueryDependency(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
 
@@ -38,7 +38,7 @@ class MrcDependency(pl.LightningModule):
             args = argparse.Namespace(**args)
 
         # compute other fields according to args
-        train_dataset = DependencyT2TDataset(
+        train_dataset = SpanQueryDataset(
             file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
             bert=args.bert_dir
         )
@@ -54,7 +54,7 @@ class MrcDependency(pl.LightningModule):
         self.args = args
 
         bert_config = BertConfig.from_pretrained(args.bert_dir)
-        self.model_config = BertMrcT2TDependencyConfig(
+        self.model_config = BertMrcS2TQueryDependencyConfig(
             pos_tags=args.pos_tags,
             dep_tags=args.dep_tags,
             pos_dim=args.pos_dim,
@@ -64,15 +64,15 @@ class MrcDependency(pl.LightningModule):
             mrc_dropout=args.mrc_dropout,
             **bert_config.__dict__
         )
-        self.model = BiaffineDependencyT2TParser.from_pretrained(args.bert_dir, config=self.model_config)
+        self.model = BiaffineDependencyS2TQeuryParser.from_pretrained(args.bert_dir, config=self.model_config)
 
         if args.freeze_bert:
             for param in self.model.bert.parameters():
                 param.requires_grad = False
 
         self.train_stat = AttachmentScores()
-        self.val_stat = AttachmentScores() if not self.args.use_mst else T2TAttachmentScores()
-        self.test_stat = AttachmentScores() if not self.args.use_mst else T2TAttachmentScores()
+        self.val_stat = AttachmentScores() if not self.args.use_mst else S2TAttachmentScores()
+        self.test_stat = AttachmentScores() if not self.args.use_mst else S2TAttachmentScores()
         self.ignore_pos_tags = list(args.ignore_pos_tags)
 
     @staticmethod
@@ -93,30 +93,29 @@ class MrcDependency(pl.LightningModule):
                             help="final div factor of linear decay scheduler")
         return parser
 
-    def forward(self, token_ids, type_ids, offsets, wordpiece_mask, span_idx,
-                span_tag, child_arcs, child_tags, pos_tags, word_mask, mrc_mask):
+    def forward(self, token_ids, type_ids, offsets, wordpiece_mask,
+                pos_tags, word_mask, mrc_mask, parent_idxs, parent_tags):
         return self.model(
-            token_ids, type_ids, offsets, wordpiece_mask, span_idx,
-            span_tag,  child_arcs, child_tags, pos_tags, word_mask, mrc_mask
+            token_ids, type_ids, offsets, wordpiece_mask,
+            pos_tags, word_mask, mrc_mask, parent_idxs, parent_tags
         )
 
     def common_step(self, batch, phase="train"):
-        token_ids, type_ids, offsets, wordpiece_mask, span_idx, span_tag, pos_tags, word_mask, mrc_mask, meta_data, child_arcs, child_tags = (
-            batch["token_ids"], batch["type_ids"], batch["offsets"], batch["wordpiece_mask"], batch["span_idx"],
-            batch["span_tag"], batch["pos_tags"], batch["word_mask"], batch["mrc_mask"], batch["meta_data"],
-            batch["child_arcs"], batch["child_tags"]
+        token_ids, type_ids, offsets, wordpiece_mask, pos_tags, word_mask, mrc_mask, meta_data, parent_idxs, parent_tags = (
+            batch["token_ids"], batch["type_ids"], batch["offsets"], batch["wordpiece_mask"],
+            batch["pos_tags"], batch["word_mask"], batch["mrc_mask"], batch["meta_data"],
+            batch["parent_idxs"], batch["parent_tags"]
         )
-        parent_probs, parent_tag_probs, child_probs, child_tag_probs, parent_arc_nll, parent_tag_nll, child_arc_loss, child_tag_loss = self(
-            token_ids, type_ids, offsets, wordpiece_mask, span_idx,
-            span_tag,  child_arcs, child_tags, pos_tags, word_mask, mrc_mask
+        parent_probs, parent_tag_probs, parent_arc_nll, parent_tag_nll = self(
+            token_ids, type_ids, offsets, wordpiece_mask,
+            pos_tags, word_mask, mrc_mask, parent_idxs, parent_tags
         )
-        loss = parent_arc_nll + parent_tag_nll + child_arc_loss + child_tag_loss
+        loss = parent_arc_nll + parent_tag_nll
         eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
-        bsz = span_idx.size(0)
+        bsz = parent_probs.size(0)
         # [bsz]
-        batch_range_vector = get_range_vector(bsz, get_device_of(span_idx))
-        gold_positions = span_idx[:, 0]
-        eval_mask = eval_mask[batch_range_vector, gold_positions] # [bsz]
+        batch_range_vector = get_range_vector(bsz, get_device_of(parent_tags))
+        eval_mask = eval_mask[batch_range_vector, parent_idxs]  # [bsz]
         if phase == "train" or not self.args.use_mst:
             # [bsz]
             pred_positions = parent_probs.argmax(1)
@@ -125,11 +124,11 @@ class MrcDependency(pl.LightningModule):
             metric.update(
                 pred_positions.unsqueeze(-1),  # [bsz, 1]
                 parent_tag_probs[batch_range_vector, pred_positions].argmax(1).unsqueeze(-1),  # [bsz, 1]
-                gold_positions.unsqueeze(-1),  # [bsz, 1]
-                span_tag.unsqueeze(-1),  # [bsz, 1]
+                parent_idxs.unsqueeze(-1),  # [bsz, 1]
+                parent_tags.unsqueeze(-1),  # [bsz, 1]
                 eval_mask.unsqueeze(-1)  # [bsz, 1]
             )
-        else:
+        else:  # todo implement mst decoding
             metric = getattr(self, f"{phase}_stat")
             metric.update(
                 meta_data["ann_idx"],
@@ -137,10 +136,6 @@ class MrcDependency(pl.LightningModule):
                 [len(x) for x in meta_data["words"]],
                 parent_probs,
                 parent_tag_probs,
-                child_probs,
-                child_tag_probs,
-                span_idx,
-                span_tag,
                 eval_mask
             )
 
@@ -236,7 +231,7 @@ class MrcDependency(pl.LightningModule):
         return new_mask
 
     def get_dataloader(self, split="train", shuffle=True):
-        dataset = DependencyT2TDataset(
+        dataset = SpanQueryDataset(
             file_path=os.path.join(self.args.data_dir, f"{split}.{self.args.data_format}"),
             pos_tags=self.args.pos_tags,
             dep_tags=self.args.dep_tags,
@@ -262,7 +257,7 @@ class MrcDependency(pl.LightningModule):
             batch_size=self.args.batch_size,
             num_workers=self.args.workers,
             pin_memory=True,
-            collate_fn=collate_dependency_t2t_data
+            collate_fn=collate_s2t_data
         )
 
         return loader
@@ -283,14 +278,14 @@ def main():
     # args
     # ------------
     parser = get_parser()
-    parser = MrcDependency.add_model_specific_args(parser)
+    parser = MrcS2TQueryDependency.add_model_specific_args(parser)
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
     # ------------
     # model
     # ------------
-    model = MrcDependency(args)
+    model = MrcS2TQueryDependency(args)
 
     # load pretrained_model
     if args.pretrained:

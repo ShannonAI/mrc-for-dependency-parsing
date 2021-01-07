@@ -6,7 +6,6 @@ import numpy as np
 import torch
 from allennlp.nn.chu_liu_edmonds import decode_mst
 from pytorch_lightning.metrics import Metric
-import warnings
 
 from parser.metrics.attachment_scores import AttachmentScores
 
@@ -15,7 +14,7 @@ from parser.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-class T2TAttachmentScores(Metric):
+class S2TAttachmentScores(Metric):
     """
     Computes labeled and unlabeled attachment scores for a
     dependency parse, as well as sentence level exact match
@@ -38,7 +37,7 @@ class T2TAttachmentScores(Metric):
         dist_sync_fn: Callable = None,
         ignore_classes: List[int] = None
     ):
-        super(T2TAttachmentScores, self).__init__()
+        super(S2TAttachmentScores, self).__init__()
         self.normal_attachment_score = AttachmentScores(
             compute_on_step,
             dist_sync_on_step,
@@ -55,10 +54,8 @@ class T2TAttachmentScores(Metric):
         sent_lens: List[int],
         parent_probs: torch.Tensor,
         parent_tag_probs: torch.Tensor,
-        child_probs: torch.Tensor,
-        child_tag_probs: torch.Tensor,
-        span_idx: torch.Tensor,
-        span_tag: torch.Tensor,
+        parent_idxs: torch.Tensor,
+        parent_tags: torch.Tensor,
         mask: Optional[torch.BoolTensor] = None,
     ):
         """
@@ -73,37 +70,31 @@ class T2TAttachmentScores(Metric):
             A tensor of parent predictions of shape (batch_size, timesteps).
         parent_tag_probs: `torch.Tensor`, required.
             A tensor of parent tag predictions of shape (batch_size, timesteps, num_tag_classes)
-        child_probs: `torch.Tensor`, required.
-            A tensor of parent predictions of shape (batch_size, timesteps).
-        child_tag_probs: `torch.Tensor`, required.
-            A tensor of parent tag predictions of shape (batch_size, timesteps, num_tag_classes)
-        span_idx : `torch.LongTensor`, required.
+        parent_idx2 : `torch.LongTensor`, required.
             A torch tensor representing the gold span position target
-            in the dependency parse. Has shape `(batch_size, 2)`.
-        span_tag : `torch.LongTensor`, required.
+            in the dependency parse. Has shape `(batch_size)`.
+        parent_tag2 : `torch.LongTensor`, required.
             A torch tensor representing the dependency tag. Has shape `(batch_size)`.
         mask : `torch.BoolTensor`, optional (default = `None`).
             A tensor of the same shape as `predicted_indices`. if False, mask the corresponding position
         """
         for fields in zip(ann_idxs, word_idxs, sent_lens,
                           parent_probs.detach().cpu().numpy(), parent_tag_probs.detach().cpu().numpy(),
-                          child_probs.detach().cpu().numpy(), child_tag_probs.detach().cpu().numpy(),
-                          span_idx.detach().cpu().numpy(), span_tag.detach().cpu().numpy(),
+                          parent_idxs.detach().cpu().numpy(), parent_tags.detach().cpu().numpy(),
                           mask.detach().cpu().numpy()):
             self.to_compute_anns.append(fields)
 
     def compute(self):
         num_tag = self.to_compute_anns[0][4].shape[-1]
-        logger.info("grouping samples according to ann-idx ...")
+        logger.info("grouping and running mst on all samples ...")
         self.to_compute_anns = sorted(self.to_compute_anns, key=lambda x: x[0])
         group_samples = [list(v) for k, v in groupby(self.to_compute_anns, lambda x: x[0])]
-        logger.info(f"grouping {len(group_samples)} sentences and running mst on all samples ...")
         for mrc_samples in group_samples:
             sent_len = mrc_samples[0][2]
             seq_len = sent_len + 1  # add [head]
 
             if len(mrc_samples) != sent_len:
-                warnings.warn("compute() should be called only when **all** mrc samples have been updated.")
+                logger.warning("compute() should be called only when **all** mrc samples have been updated.")
                 continue
 
             # gather from multiple mrc samples to compute final tree
@@ -133,8 +124,6 @@ class T2TAttachmentScores(Metric):
             # todo normalize according to row, since every child can only have one parent
             pairwise_head_probs = parent_pairwise_head_probs * child_pairwise_head_probs
             attended_arcs = parent_attended_arcs * child_attended_arcs
-            pairwise_head_probs = pairwise_head_probs / torch.sum(pairwise_head_probs, dim=-1, keepdim=True)
-            attended_arcs = attended_arcs / torch.sum(attended_arcs, dim=-1, keepdim=True)
 
             # This energy tensor expresses the following relation:
             # energy[i,j] = "Score that i is the head of j". In this
