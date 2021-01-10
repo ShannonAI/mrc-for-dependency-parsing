@@ -10,19 +10,12 @@
 
 """
 
+from typing import List, Dict
 
-from itertools import chain
-from typing import List, Iterable, Dict
-from collections import defaultdict
-
-import numpy as np
 import torch
-from allennlp.data.token_indexers import PretrainedTransformerIndexer
-from conllu import parse_incr
-from parser.data.base_bert_dataset import BaseDataset
-from parser.data.samplers.grouped_sampler import create_lengths_groups
-from parser.data.tree_utils import build_subtree_spans
 
+from parser.data.base_bert_dataset import BaseDataset
+from parser.data.tree_utils import build_subtree_spans
 from parser.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -77,11 +70,12 @@ class SubTreeProposalDataset(BaseDataset):
 
         fields["pos_tags"] = torch.LongTensor([self.pos_tag_2idx[p] for p in pos_tags])
         fields["subtree_spans"] = torch.LongTensor(build_subtree_spans(dp_heads))
-        # fields["dp_idxs"] = torch.LongTensor(dp_heads)
-        # fields["dp_tags"] = torch.LongTensor([self.dep_tag_2idx[t] for t in dp_tags])
-
         fields["meta_data"] = {
             "words": words,
+            "ann_idx": idx,
+            "pos_tags": pos_tags,
+            "dp_tags": dp_tags,
+            "dp_heads": dp_heads
         }
 
         return fields

@@ -36,7 +36,8 @@ class T2TAttachmentScores(Metric):
         dist_sync_on_step: bool = False,
         process_group: Optional[Any] = None,
         dist_sync_fn: Callable = None,
-        ignore_classes: List[int] = None
+        ignore_classes: List[int] = None,
+        child_score_alpha: float = 1.0
     ):
         super(T2TAttachmentScores, self).__init__()
         self.normal_attachment_score = AttachmentScores(
@@ -47,6 +48,7 @@ class T2TAttachmentScores(Metric):
             ignore_classes
         )
         self.add_state("to_compute_anns", default=[], dist_reduce_fx=None)
+        self.child_score_alpha = child_score_alpha
 
     def update(  # type: ignore
         self,
@@ -129,10 +131,10 @@ class T2TAttachmentScores(Metric):
                 parent_pairwise_head_probs[word_idx+1] = torch.FloatTensor(sent_parent_tag_probs[context_start: context_end])
                 # add child score
                 child_attended_arcs[:, word_idx+1] = torch.FloatTensor(sent_child_probs[context_start: context_end])
-                child_pairwise_head_probs[word_idx + 1] = torch.FloatTensor(sent_parent_tag_probs[context_start: context_end])
-            # todo normalize according to row, since every child can only have one parent
-            pairwise_head_probs = parent_pairwise_head_probs * child_pairwise_head_probs
-            attended_arcs = parent_attended_arcs * child_attended_arcs
+                child_pairwise_head_probs[:, word_idx+1] = torch.FloatTensor(sent_child_tag_probs[context_start: context_end])
+            # todo debug child score
+            pairwise_head_probs = parent_pairwise_head_probs #* (child_pairwise_head_probs ** self.child_score_alpha)
+            attended_arcs = parent_attended_arcs #* (child_attended_arcs ** self.child_score_alpha)
             pairwise_head_probs = pairwise_head_probs / torch.sum(pairwise_head_probs, dim=-1, keepdim=True)
             attended_arcs = attended_arcs / torch.sum(attended_arcs, dim=-1, keepdim=True)
 
