@@ -110,7 +110,8 @@ class MrcDependency(pl.LightningModule):
             token_ids, type_ids, offsets, wordpiece_mask, span_idx,
             span_tag,  child_arcs, child_tags, pos_tags, word_mask, mrc_mask
         )
-        loss = parent_arc_nll + parent_tag_nll + child_arc_loss + child_tag_loss
+        # todo fix child bug
+        loss = parent_arc_nll + parent_tag_nll # + child_arc_loss + child_tag_loss
         eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
         bsz = span_idx.size(0)
         # [bsz]
