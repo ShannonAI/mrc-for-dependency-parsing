@@ -60,8 +60,7 @@ class SpanQueryDataset(BaseDataset):
     ) -> None:
         super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
 
-        for d in self.data:
-            d.append(build_subtree_spans(dp_heads=d[3]))
+        self.subtree_spans = [build_subtree_spans(d[3]) for d in self.data]
 
         self.offsets = self.build_offsets()
         logger.info(f"build {len(self.offsets)} mrc-samples from {file_path}")
@@ -75,7 +74,7 @@ class SpanQueryDataset(BaseDataset):
         """offsets[i] = (sent_idx, word_idx) of ith mrc-samples."""
         offsets = []
         # We want to query each subtree(represented by each token as root node) for each sentence
-        for ann_idx, (words, _, _, _, _) in enumerate(self.data):
+        for ann_idx, (words, _, _, _) in enumerate(self.data):
             for word_idx in range(len(words)):
                 offsets.append((ann_idx, word_idx))
         return offsets
@@ -98,7 +97,8 @@ class SpanQueryDataset(BaseDataset):
             parent_tags: [1]
         """
         ann_idx, word_idx = self.offsets[idx]
-        words, pos_tags, dp_tags, dp_heads, subtree_spans = self.data[ann_idx]
+        words, pos_tags, dp_tags, dp_heads = self.data[ann_idx]
+        subtree_spans = self.subtree_spans[ann_idx]
         span_start, span_end = subtree_spans[word_idx]
         # mrc sample consists of query and context.
         mrc_length = len(words) * 2 + 5
@@ -117,10 +117,17 @@ class SpanQueryDataset(BaseDataset):
         mrc_tokens = query_tokens + words
 
         bert_mismatch_fields = self.get_mismatch_token_idx(mrc_tokens)
-        self.replace_special_token(bert_mismatch_fields, [span_start], self.SPAN_START)
-        self.replace_special_token(bert_mismatch_fields, [word_idx+1], self.SUBTREE_ROOT_START)
-        self.replace_special_token(bert_mismatch_fields, [word_idx+3], self.SUBTREE_ROOT_END)
-        self.replace_special_token(bert_mismatch_fields, [span_end+4], self.SPAN_END)
+        # print(bert_mismatch_fields)
+        # print(span_start, span_end)
+        # print(words, dp_tags, dp_heads)
+        try:
+            self.replace_special_token(bert_mismatch_fields, [span_start], self.SPAN_START)
+            self.replace_special_token(bert_mismatch_fields, [word_idx+1], self.SUBTREE_ROOT_START)
+            self.replace_special_token(bert_mismatch_fields, [word_idx+3], self.SUBTREE_ROOT_END)
+            self.replace_special_token(bert_mismatch_fields, [span_end+4], self.SPAN_END)
+        except Exception as e:
+            logger.error("error", exc_info=True)
+            print("span_start, span_end, word_idx:", span_start, span_end, word_idx)
 
         fields.update(bert_mismatch_fields)
 
@@ -155,7 +162,7 @@ class SpanQueryDataset(BaseDataset):
     def _get_item_lengths(self) -> List[int]:
         """get seqence-length of every item"""
         item_lengths = []
-        for words, _, _, _, _ in self.data:
+        for words, _, _, _ in self.data:
             item_lengths.extend([len(words)] * len(words))
         return item_lengths
 

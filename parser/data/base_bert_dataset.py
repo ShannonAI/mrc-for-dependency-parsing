@@ -79,6 +79,9 @@ class BaseDataset(Dataset):
         self._matched_indexer = PretrainedTransformerIndexer(model_name=bert)
         self._allennlp_tokenizer = self._matched_indexer._allennlp_tokenizer
 
+    def encode_dep_tags(self, dep_tags: List[str]) -> List[int]:
+        return [self.dep_tag_2idx[t] for t in dep_tags]
+
     @staticmethod
     def build_label_vocab(labels: Iterable[str]):
         """build label to tag dictionay"""
@@ -159,5 +162,7 @@ class BaseDataset(Dataset):
         token_ids, offsets = tokenizer_fields["token_ids"], tokenizer_fields["offsets"]
         for pos in positions:
             offset = offsets[pos].numpy().tolist()
-            assert offset[0] == offset[1]
+            assert offset[0] == offset[1], \
+                f"replace should work only when this token has not been splitted to pieces, but found {offset} " \
+                f"with fields: {tokenizer_fields}, and positions: {positions}"
             token_ids[offset[0]] = replace_id

@@ -78,6 +78,9 @@ class DependencyDataset(BaseDataset):
         fields["pos_tags"] = torch.LongTensor(pos_tag_idxs)
         fields["meta_data"] = {
             "words": words,
+            "pos_tags": pos_tags,
+            "dp_tags": dp_tags,
+            "dp_heads": dp_heads
         }
 
         return fields
