@@ -179,7 +179,7 @@ class BiaffineDependencyS2TProposalParser(BertPreTrainedModel):
         span_start_scores = span_start_scores + (~start_mask).float() * minus_inf
         span_end_scores = span_end_scores + (~end_mask).float() * minus_inf
 
-        output = (span_start_scores, span_end_scores)
+        output = (F.log_softmax(span_start_scores, dim=-1), F.log_softmax(span_end_scores, dim=-1))
 
         if subtree_spans is not None:
 

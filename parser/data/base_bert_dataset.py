@@ -13,6 +13,7 @@ from typing import List, Iterable, Dict
 
 import numpy as np
 import torch
+import warnings
 from allennlp.data.token_indexers import PretrainedTransformerIndexer
 from conllu import parse_incr
 from torch.utils.data import Dataset
@@ -162,7 +163,6 @@ class BaseDataset(Dataset):
         token_ids, offsets = tokenizer_fields["token_ids"], tokenizer_fields["offsets"]
         for pos in positions:
             offset = offsets[pos].numpy().tolist()
-            assert offset[0] == offset[1], \
-                f"replace should work only when this token has not been splitted to pieces, but found {offset} " \
-                f"with fields: {tokenizer_fields}, and positions: {positions}"
+            if offset[0] != offset[1]:
+                warnings.warn(f"replace normally expect token in `positions` has not been split to pieces")
             token_ids[offset[0]] = replace_id
