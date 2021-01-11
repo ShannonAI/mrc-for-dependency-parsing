@@ -14,7 +14,7 @@ Codes for dependency parsing, including following models:
     - [x] add token-span query
     - [ ] evaluate as pipeline
     - [ ] joint training stage1/stage2
-    - [ ]第二阶段，word的parent一定在span之外。inference的时候可以加上限制
+    - [ ] 第二阶段，word的parent一定在span之外。inference的时候可以加上限制
 
 ## Requirements
 * python>=3.6
