@@ -42,7 +42,6 @@ class DependencyT2TDataset(BaseDataset):
     SPAN_END = 2
 
     SEP_POS = "sep_pos"
-    SEP = "[SEP]"
 
     group_file_suffix = ".mrc"
 
@@ -55,6 +54,13 @@ class DependencyT2TDataset(BaseDataset):
         dep_tags: List[str] = None,
     ) -> None:
         super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
+
+        if 'roberta' in bert:
+            self.bert_name = 'roberta'
+            self.SEP = "</s>"
+        else:
+            self.bert_name = 'bert'
+            self.SEP = "[SEP]"
 
         self.offsets = self.build_offsets()
         logger.info(f"build {len(self.offsets)} mrc-samples from {file_path}")
@@ -94,7 +100,12 @@ class DependencyT2TDataset(BaseDataset):
         ann_idx, word_idx = self.offsets[idx]
         words, pos_tags, dp_tags, dp_heads = self.data[ann_idx]
         mrc_length = len(words) * 2 + 3
-        type_ids = [0] * (len(words) + 3) + [1] * len(words)  # bert sentence-pair token-ids
+
+        if self.bert_name == 'roberta':
+            type_ids = [0] * (len(words) + 3) + [0] * len(words)
+        else:
+            type_ids = [0] * (len(words) + 3) + [1] * len(words)  # bert sentence-pair token-ids
+
         # todo try type_ids = [0] * (len(words) + 2) + [1] * (len(words) + 1) ?
 
         fields = {"type_ids": torch.LongTensor(type_ids)}
