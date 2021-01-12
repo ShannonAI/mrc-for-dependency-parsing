@@ -124,7 +124,7 @@ class DecodeStruct:
         span_candidates: subtree candidates.
             maps word_idx to list of (span_start, span_end, span_score), sorted from large to small
         span2parent_arc_scores: subtree-parent scores
-            maps each span-candidate(word_idx, span_start, span_end) to its parent_scores.
+            maps each span-candidate(word_idx, span_start, span_end) to its parent probs.
             arc_scores is a numpy array of shape [nwords+1], +1 for [root] score.
         span2parent_tags_idxs: subtree-parent tags scores
             maps each span-candidate(word_idx, span_start, span_end) to its max parent tag scores.
@@ -233,10 +233,14 @@ class DecodeStruct:
             ))
         return output
 
-    def decode(self) -> SubTreeStruct:
+    def decode(self, arc_alpha=1.0) -> SubTreeStruct:
         """
-        decode highest score tree from self
+        decode highest score tree from self using bottom-up dynamic-programming
+        todo write dp function here
+
         if no valid dependency, score of SubTreeStruct is -math.inf
+        Args:
+            arc_alpha: float, controls weight of parent-arc score
         """
         if self.span_lst is None:
             self.get_spans_infos()
@@ -290,7 +294,7 @@ class DecodeStruct:
                     children_scores = []
                     for subtree_idx in left_children_ids:
                         children_scores.append(max_dep[subtree_idx].score +
-                                               self.parent_arc_score_lst[subtree_idx][word_idx])
+                                               arc_alpha * math.log(self.parent_arc_score_lst[subtree_idx][word_idx]))
                     best_splits, best_score = find_max_splits(start=start, end=word_idx-1,
                                                               spans=children_spans,
                                                               scores=children_scores
@@ -311,7 +315,7 @@ class DecodeStruct:
                     children_scores = []
                     for subtree_idx in right_children_ids:
                         children_scores.append(max_dep[subtree_idx].score +
-                                               self.parent_arc_score_lst[subtree_idx][word_idx])
+                                               arc_alpha * math.log(self.parent_arc_score_lst[subtree_idx][word_idx]))
                     best_splits, best_score = find_max_splits(start=word_idx+1, end=end,
                                                               spans=children_spans,
                                                               scores=children_scores
