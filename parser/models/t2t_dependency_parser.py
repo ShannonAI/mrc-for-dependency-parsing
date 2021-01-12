@@ -29,7 +29,7 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
     But We use token-to-token MRC to extract parent and labels
     """
 
-    def __init__(self, config: BertMrcT2TDependencyConfig):
+    def __init__(self, config):
         super().__init__(config)
 
         self.config = config
