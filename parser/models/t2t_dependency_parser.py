@@ -13,10 +13,10 @@ from allennlp.nn.util import (
 from allennlp.nn.util import get_range_vector
 from overrides import overrides
 from torch import nn
-from transformers import BertModel, BertPreTrainedModel
+from transformers import BertModel, BertPreTrainedModel, RobertaModel
 from transformers.modeling_bert import BertEncoder
 
-from parser.models.t2t_dependency_config import BertMrcT2TDependencyConfig
+from parser.models.t2t_dependency_config import BertMrcT2TDependencyConfig, RobertaMrcT2TDependencyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,11 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
                 self.fuse_layer = None
         else:
             self.pos_embedding = None
-
-        self.bert = BertModel(config)
+        
+        if isinstance(config, BertMrcT2TDependencyConfig):
+            self.bert = BertModel(config)
+        elif isinstance(config, RobertaMrcT2TDependencyConfig):
+            self.bert = RobertaModel(config)
 
         if config.additional_layer > 0:
             if config.additional_layer_type == "transformer":

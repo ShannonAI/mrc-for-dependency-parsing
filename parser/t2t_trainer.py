@@ -11,6 +11,8 @@
 
 import os
 import argparse
+from parser.models.t2t_dependency_config import RobertaMrcT2TDependencyConfig
+from transformers.configuration_roberta import RobertaConfig
 import pytorch_lightning as pl
 import torch
 from allennlp.nn.util import get_range_vector, get_device_of
@@ -52,9 +54,18 @@ class MrcDependency(pl.LightningModule):
 
         self.save_hyperparameters(args)
         self.args = args
+        
+        bert_name = args.bert_name
+        if bert_name == 'roberta-large':
+            bert_config = RobertaConfig.from_pretrained(args.bert_dir)
+            MrcT2TDependencyConfig = RobertaMrcT2TDependencyConfig
+        elif bert_name == 'bert':
+            bert_config = BertConfig.from_pretrained(args.bert_dir)
+            MrcT2TDependencyConfig = BertMrcT2TDependencyConfig
+        else:
+            raise ValueError("Unknown bert name!!")
 
-        bert_config = BertConfig.from_pretrained(args.bert_dir)
-        self.model_config = BertMrcT2TDependencyConfig(
+        self.model_config = MrcT2TDependencyConfig(
             pos_tags=args.pos_tags,
             dep_tags=args.dep_tags,
             pos_dim=args.pos_dim,
