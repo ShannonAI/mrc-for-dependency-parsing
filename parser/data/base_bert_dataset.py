@@ -142,7 +142,7 @@ class BaseDataset(Dataset):
                 logger.error(f"Loading pre-computed groups from {group_save_path} failed", exc_info=1)
         if not success:
             logger.info("Re-computing groups")
-            groups, counts = create_lengths_groups(lengths=self.get_groups(),
+            groups, counts = create_lengths_groups(lengths=self._get_item_lengths(),
                                                    max_length=max_length)
             assert len(groups) == len(self), \
                 f"number of group_idxs {len(groups)} should have same length as dataset: {len(self)}"
