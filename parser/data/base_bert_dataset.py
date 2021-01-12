@@ -13,6 +13,7 @@ from typing import List, Iterable, Dict
 
 import numpy as np
 import torch
+import warnings
 from allennlp.data.token_indexers import PretrainedTransformerIndexer
 from conllu import parse_incr
 from torch.utils.data import Dataset
@@ -141,7 +142,7 @@ class BaseDataset(Dataset):
                 logger.error(f"Loading pre-computed groups from {group_save_path} failed", exc_info=1)
         if not success:
             logger.info("Re-computing groups")
-            groups, counts = create_lengths_groups(lengths=self.get_groups(),
+            groups, counts = create_lengths_groups(lengths=self._get_item_lengths(),
                                                    max_length=max_length)
             assert len(groups) == len(self), \
                 f"number of group_idxs {len(groups)} should have same length as dataset: {len(self)}"
@@ -162,7 +163,6 @@ class BaseDataset(Dataset):
         token_ids, offsets = tokenizer_fields["token_ids"], tokenizer_fields["offsets"]
         for pos in positions:
             offset = offsets[pos].numpy().tolist()
-            assert offset[0] == offset[1], \
-                f"replace should work only when this token has not been splitted to pieces, but found {offset} " \
-                f"with fields: {tokenizer_fields}, and positions: {positions}"
+            if offset[0] != offset[1]:
+                warnings.warn(f"replace normally expect token in `positions` has not been split to pieces")
             token_ids[offset[0]] = replace_id

@@ -126,7 +126,7 @@ class BiaffineDependencyS2TQeuryParser(BertPreTrainedModel):
             parent_tags: [batch_size]
         Returns:
             parent_probs: [batch_size, num_word]
-            parent_tag_probs: [batch_size, num_words]
+            parent_tag_probs: [batch_size, num_words, num_tags]
             arc_loss (if parent_idx is not None)
             tag_loss (if parent_idxs and parent_tags are not None)
         """

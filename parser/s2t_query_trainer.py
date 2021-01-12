@@ -28,7 +28,7 @@ from parser.data.samplers import GroupedSampler
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
-class MrcS2TQueryDependency(pl.LightningModule):
+class MrcS2TQuery(pl.LightningModule):
     def __init__(self, args):
         super().__init__()
 
@@ -94,7 +94,7 @@ class MrcS2TQueryDependency(pl.LightningModule):
         return parser
 
     def forward(self, token_ids, type_ids, offsets, wordpiece_mask,
-                pos_tags, word_mask, mrc_mask, parent_idxs, parent_tags):
+                pos_tags, word_mask, mrc_mask, parent_idxs=None, parent_tags=None):
         return self.model(
             token_ids, type_ids, offsets, wordpiece_mask,
             pos_tags, word_mask, mrc_mask, parent_idxs, parent_tags
@@ -270,6 +270,7 @@ class MrcS2TQueryDependency(pl.LightningModule):
 
     def test_dataloader(self) -> DataLoader:
         return self.get_dataloader("test", shuffle=False)
+        # return self.get_dataloader("sample", shuffle=False)
 
 
 def main():
@@ -278,14 +279,14 @@ def main():
     # args
     # ------------
     parser = get_parser()
-    parser = MrcS2TQueryDependency.add_model_specific_args(parser)
+    parser = MrcS2TQuery.add_model_specific_args(parser)
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
     # ------------
     # model
     # ------------
-    model = MrcS2TQueryDependency(args)
+    model = MrcS2TQuery(args)
 
     # load pretrained_model
     if args.pretrained:

@@ -13,7 +13,6 @@ import os
 import argparse
 import pytorch_lightning as pl
 import torch
-from allennlp.nn.util import get_range_vector, get_device_of
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
 from transformers import BertConfig, AdamW
@@ -25,12 +24,12 @@ from parser.utils.get_parser import get_parser
 from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler
 from parser.data.samplers import GroupedSampler
 from typing import Dict, Union
-from pytorch_lightning.metrics.classification import Accuracy
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 
-class MrcS2TDependency(pl.LightningModule):
+class MrcS2TProposal(pl.LightningModule):
     acc_topk = 5  # evaluate topN acc, for every 1<= N <=k
 
     def __init__(self, args: Union[Dict, argparse.Namespace]):
@@ -102,7 +101,7 @@ class MrcS2TDependency(pl.LightningModule):
         return parser
 
     def forward(self, token_ids, type_ids, offsets, wordpiece_mask,
-                pos_tags, word_mask, subtree_spans):
+                pos_tags, word_mask, subtree_spans=None):
         return self.model(
             token_ids, type_ids, offsets, wordpiece_mask,
             pos_tags, word_mask, subtree_spans
@@ -265,6 +264,7 @@ class MrcS2TDependency(pl.LightningModule):
 
     def test_dataloader(self) -> DataLoader:
         return self.get_dataloader("test", shuffle=False)
+        # return self.get_dataloader("sample", shuffle=False)
 
 
 def main():
@@ -273,14 +273,14 @@ def main():
     # args
     # ------------
     parser = get_parser()
-    parser = MrcS2TDependency.add_model_specific_args(parser)
+    parser = MrcS2TProposal.add_model_specific_args(parser)
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
     # ------------
     # model
     # ------------
-    model = MrcS2TDependency(args)
+    model = MrcS2TProposal(args)
 
     # load pretrained_model
     if args.pretrained:
@@ -290,7 +290,7 @@ def main():
 
     # call backs
     checkpoint_callback = ModelCheckpoint(
-        monitor=f'val_top{MrcS2TDependency.acc_topk}_acc',
+        monitor=f'val_top{MrcS2TProposal.acc_topk}_acc',
         dirpath=args.default_root_dir,
         save_top_k=10,
         save_last=True,
