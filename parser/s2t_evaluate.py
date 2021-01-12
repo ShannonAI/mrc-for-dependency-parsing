@@ -23,16 +23,16 @@ logger = get_logger(__name__)
 # data_path = ""
 # bert_dir = "/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking"
 
-# proposal_dir = "/userhome/yuxian/train_logs/dependency/ptb/biaf/s2t/proposal"
-# proposal_hparams = os.path.join(proposal_dir, "lightning_logs/version_0/hparams.yaml")
-proposal_dir = "/data/nfsdata2/yuxian/share/parser/proposal/"
-proposal_hparams = os.path.join(proposal_dir, "version_0/hparams.yaml")
+proposal_dir = "/userhome/yuxian/train_logs/dependency/ptb/biaf/s2t/proposal"
+proposal_hparams = os.path.join(proposal_dir, "lightning_logs/version_0/hparams.yaml")
+# proposal_dir = "/data/nfsdata2/yuxian/share/parser/proposal/"
+# proposal_hparams = os.path.join(proposal_dir, "version_0/hparams.yaml")
 proposal_ckpt = os.path.join(proposal_dir, "epoch=9.ckpt")
 
-# query_dir = "/userhome/yuxian/train_logs/dependency/ptb/s2t/query_newsep"
-# query_hparams = os.path.join(query_dir, "lightning_logs/version_1/hparams.yaml")
-query_dir = "/data/nfsdata2/yuxian/share/parser/query"
-query_hparams = os.path.join(query_dir, "version_1/hparams.yaml")
+query_dir = "/userhome/yuxian/train_logs/dependency/ptb/s2t/query_newsep"
+query_hparams = os.path.join(query_dir, "lightning_logs/version_1/hparams.yaml")
+# query_dir = "/data/nfsdata2/yuxian/share/parser/query"
+# query_hparams = os.path.join(query_dir, "version_1/hparams.yaml")
 query_ckpt = os.path.join(query_dir, "epoch=4.ckpt")
 
 proposal_model = MrcS2TProposal.load_from_checkpoint(
@@ -43,8 +43,8 @@ proposal_model = MrcS2TProposal.load_from_checkpoint(
     max_length=128,
     workers=4,
     group_sample=False,
-    bert_dir="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
-    data_dir="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/",
+    # bert_dir="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
+    # data_dir="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/",
     gpus="1"  # deactivate distributed sampler
 )
 proposal_model.cuda()
@@ -60,8 +60,8 @@ query_model = MrcS2TQuery.load_from_checkpoint(
     workers=4,
     group_sample=False,
     gpus="1",
-    bert_dir="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
-    data_dir="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/",
+    # bert_dir="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
+    # data_dir="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/",
 )
 query_model.cuda()
 query_model.eval()

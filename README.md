@@ -15,6 +15,7 @@ Codes for dependency parsing, including following models:
     - [ ] evaluate as pipeline
     - [ ] joint training stage1/stage2
     - [ ] 第二阶段，word的parent一定在span之外。inference的时候可以加上限制
+    - [ ] 第一阶段，start/end不应该独立
 
 ## Requirements
 * python>=3.6
@@ -37,7 +38,12 @@ Note that you should change `MODEL_DIR` and `BERT_DIR` to your own path.
 See `parser/t2t_evaluate.py`
 
 ### 3. Span-to-Token MRC (Developing)
+#### Train
+* proposal model: `scripts/s2t/pengcheng_ptb_proposal.sh`
+* query model: `scripts/s2t/pengcheng_ptb_query.sh`
 
+#### Evaluate
+See `parser/s2t_evaluate_dp.py`
 
 ## TODO
 - [x] refactor dataset reader, add base class and put collate_fn in corresponding file.

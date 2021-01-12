@@ -53,15 +53,61 @@ def build_possible_splits(start: int, end: int, spans: List[Tuple[int, int]]) ->
     return mem[start]
 
 
+def find_max_splits(start: int, end: int, spans: List[Tuple[int, int]], scores: List[float]) -> Tuple[List[int], float]:
+    """
+    find the factorization of [start, end] to some sub_spans s_1, ...s_n in spans that have the highest sum scores
+    $$S(start, end, s_1, ...,s_n)=\sum_{i=1}^{n} scores_{s_i}$$
+    if does not exists, return empty list and -math.inf
+    Args:
+        start: start of parent span
+        end: end of parent span, including iteself
+        spans: candidate sub_spans for factorization
+        scores: score of each sub_spans
+
+    Returns:
+        best_splits: list of sub_span indexes that have highest sum scores
+        max_score: float, score of this factorization
+
+    Examples:
+        >>> spans = [(0, 4), (0, 2), (0, 3), (4, 5), (3, 5), (5, 5), (3, 4)]
+        >>> scores = [1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0]
+        >>> find_max_splits(0, 5, spans, scores)
+        ([1, 6, 5], 3.0)
+    """
+    assert len(scores) == len(spans)
+
+    # end2idxs[i] contains all valid span idxs that endswith i
+    end2idxs: Dict[int, List[int]] = defaultdict(list)
+    for s_idx, ((s, e), score) in enumerate(zip(spans, scores)):
+        if start <= s <= e <= end:
+            end2idxs[e].append(s_idx)
+
+    # dp_splits[idx] stores best splits among all possible splits of [start: start+idx], idx not included
+    dp_splits = [[] for _ in range((end - start + 2))]
+    # dp_scores[idx] stores best sum score among all possible splits of [start: start+idx], idx not included
+    dp_scores = [-math.inf for _ in range((end - start + 2))]
+    dp_scores[0] = 0.0
+
+    for e in range(start, end+1):
+        for last_span_idx in end2idxs[e]:
+            last_span_start = spans[last_span_idx][0]
+            score = dp_scores[last_span_start-start] + scores[last_span_idx]
+            if score > dp_scores[e-start+1]:
+                dp_scores[e-start+1] = score
+                dp_splits[e-start+1] = dp_splits[last_span_start-start] + [last_span_idx]
+
+    return dp_splits[-1], dp_scores[-1]
+
+
 class SubTreeStruct:
     """
     SubTree Struct
     Args:
         root: word_idx of root token
         score: score of this tree
-        dep_arcs: arcs in this sub-tree (child_idx, parent_idx)
+        dep_arcs: arcs in this sub-tree (child_idx, parent_idx, tag_idx)
     """
-    def __init__(self, root: int, score: float, dep_arcs: List[Tuple[int, int]]):
+    def __init__(self, root: int, score: float, dep_arcs: List[Tuple[int, int, int]]):
         self.root = root
         self.score = score
         self.dep_arcs = dep_arcs or []
@@ -80,6 +126,9 @@ class DecodeStruct:
         span2parent_arc_scores: subtree-parent scores
             maps each span-candidate(word_idx, span_start, span_end) to its parent_scores.
             arc_scores is a numpy array of shape [nwords+1], +1 for [root] score.
+        span2parent_tags_idxs: subtree-parent tags scores
+            maps each span-candidate(word_idx, span_start, span_end) to its max parent tag scores.
+            tags_idxs is a numpy array of shape [nwords+1], +1 for [root] score.
         dep_heads: dependency heads
         dep_tags: dependency tags
         todo:
@@ -91,7 +140,7 @@ class DecodeStruct:
         words: List[str],
         span_candidates: Dict[int, List[Tuple[int, int, float]]],
         span2parent_arc_scores: Dict[Tuple[int, int, int], np.array] = None,
-        span2parent_tags_scores: Dict[Tuple[int, int, int], np.array] = None,
+        span2parent_tags_idxs: Dict[Tuple[int, int, int], np.array] = None,
         dep_heads: List[int] = None,
         dep_tags: List[str] = None,
         pos_tags: torch.LongTensor = None
@@ -99,6 +148,7 @@ class DecodeStruct:
         self.words = words
         self.span_candidates = span_candidates
         self.span2parent_arc_scores = span2parent_arc_scores or dict()
+        self.span2parent_tags_idxs = span2parent_tags_idxs or dict()
         self.dep_heads = dep_heads
         self.dep_tags = dep_tags
         self.pos_tags = pos_tags
@@ -107,7 +157,9 @@ class DecodeStruct:
             for start, end, score in subtrees:
                 self.span2root_scores[(word_idx, start, end)] = score
 
-        self.span_lst = self.parent_arc_score_lst = self.span_root_score_lst = None
+        # values to generate during decode
+        self.span_lst = self.parent_arc_score_lst = self.span_root_score_lst = self.parent_tags_idxs_lst = None
+        self.span_parent_arc_topk = None
 
     def __repr__(self):
         return json.dumps({
@@ -124,6 +176,7 @@ class DecodeStruct:
         """
         self.span_lst = list(self.span2parent_arc_scores.keys())
         self.parent_arc_score_lst: List[np.array] = [self.span2parent_arc_scores[s] for s in self.span_lst]
+        self.parent_tags_idxs_lst: List[np.array] = [self.span2parent_tags_idxs[s] for s in self.span_lst]
         self.span_root_score_lst: List[float] = [self.span2root_scores[s] for s in self.span_lst]
         # spans that offsets + 1 (for root)
         self.span_lst = [(s[0]+1, s[1]+1, s[2]+1) for s in self.span_lst]
@@ -134,7 +187,14 @@ class DecodeStruct:
         valid_span_lst = [(0, 0, len(self.words)-1)]
         valid_span_root_scores = [0.0]
         valid_span_arc_lst = [np.zeros_like(self.parent_arc_score_lst[0])]
-        for span, root_score, arc_scores in zip(self.span_lst, self.span_root_score_lst, self.parent_arc_score_lst):
+        valid_span_tags_lst = [np.zeros_like(self.parent_tags_idxs_lst[0])]
+        for span, root_score, arc_scores, tags in zip(
+        # for span, root_score, arc_scores in zip(
+            self.span_lst,
+            self.span_root_score_lst,
+            self.parent_arc_score_lst,
+            self.parent_tags_idxs_lst
+        ):
             word_idx, start, end = span
             if start > end:
                 continue
@@ -145,13 +205,15 @@ class DecodeStruct:
             valid_span_lst.append(span)
             valid_span_root_scores.append(root_score)
             valid_span_arc_lst.append(arc_scores)
+            valid_span_tags_lst.append(tags)
 
         self.span_lst = valid_span_lst
         self.span_root_score_lst = valid_span_root_scores
         self.parent_arc_score_lst = valid_span_arc_lst
+        self.parent_tags_idxs_lst = valid_span_tags_lst
         self.span_parent_arc_topk = []
         for parent_arc_score in self.parent_arc_score_lst:
-            topk_parent_idx = np.argpartition(-parent_arc_score, kth=min(topk, len(parent_arc_score)))[: topk]
+            topk_parent_idx = np.argpartition(-parent_arc_score, kth=min(topk, len(parent_arc_score)-1))[: topk]
             self.span_parent_arc_topk.append(topk_parent_idx)
         # print(self.words)
         # print(self.span_lst)
@@ -171,57 +233,37 @@ class DecodeStruct:
             ))
         return output
 
-    def decode(self) -> Union[None, SubTreeStruct]:
-        """decode highest score tree from self"""
+    def decode(self) -> SubTreeStruct:
+        """
+        decode highest score tree from self
+        if no valid dependency, score of SubTreeStruct is -math.inf
+        """
         if self.span_lst is None:
             self.get_spans_infos()
 
         all_trees: List[Tuple[int, int, int]] = self.span_lst
         all_spans = [(s[1], s[2]) for s in all_trees]
-        subtree_splits: List[List[List[int]]] = []
 
-        for word_idx, span_start, span_end in all_trees:
-            # for [root], it can only has one child that range from 1 to span_end
-            if word_idx == 0:
-                splits = []
-                for span_idx, (candidate_start, candidate_end) in enumerate(all_spans):
-                    if candidate_start == 1 and candidate_end == span_end:
-                        splits.append([span_idx])
-            # for other subtrees, one can be factorized to any number of subtrees
-            # as long as every token in its range is covered by all subtrees.
-            else:
-                # we only consider factorization for topk parent.
-                valid_subtree_idxs = [s_idx for s_idx in range(len(all_spans))
-                                      if word_idx in self.span_parent_arc_topk[s_idx]]
-                left_candidates = build_possible_splits(
-                    span_start,
-                    word_idx-1,
-                    [s for s_idx, s in enumerate(all_spans) if s_idx in valid_subtree_idxs]
-                )
-                right_candidates = build_possible_splits(
-                    word_idx+1,
-                    span_end,
-                    [s for s_idx, s in enumerate(all_spans) if s_idx in valid_subtree_idxs]
-                )
-                splits = []
-                for l in left_candidates:
-                    for r in right_candidates:
-                        splits.append([valid_subtree_idxs[x] for x in l+r])
-            subtree_splits.append(splits)
-
-        # find all subtree children, because we need to compute all children scores
-        # of one tree before we compute its final score
-        children_idxs = []
-        for splits in subtree_splits:
-            s = set()
-            for x in splits:
-                s.update(x)
-            children_idxs.append(s)
+        # find all candidate subtree children for each span,
+        # because before we score one tree,
+        # we need to score all of its children.
+        left_children_idxs = []
+        right_children_idxs = []
+        for parent_idx, start, end in all_trees:
+            left_children = []
+            right_children = []
+            for s_idx, (s, e) in enumerate(all_spans):
+                if start <= s and e <= parent_idx-1:
+                    left_children.append(s_idx)
+                # root can only have one right children that startswith 1 and endswith max_length
+                elif s >= parent_idx+1 and e <= end and (parent_idx > 0 or (s == 1 and e == end)):
+                    right_children.append(s_idx)
+            left_children_idxs.append(left_children)
+            right_children_idxs.append(right_children)
 
         finished = [False] * len(all_trees)
         # We compute tree score from bottom-up, until the root score is computed
         # We firstly finish all spans that start==end, because they are leaves.
-        # max_dep contains root_idx, subtree-score and dependency-arcs
         max_dep: List[SubTreeStruct] = [None] * len(all_trees)
         for span_idx, (word_idx, start, end) in enumerate(all_trees):
             if start != end:
@@ -229,34 +271,63 @@ class DecodeStruct:
             max_dep[span_idx] = SubTreeStruct(word_idx, self.span_root_score_lst[span_idx], [])
             finished[span_idx] = True
 
-        finished_count = sum(finished)
         while not finished[0]:
             for span_idx, ((word_idx, start, end), finish) in enumerate(zip(all_trees, finished)):
                 if finish:
                     continue
-                if not all(finished[c] for c in children_idxs[span_idx]):
+                left_children_ids = left_children_idxs[span_idx]
+                if not all(finished[c] for c in left_children_ids):
+                    continue
+                right_children_ids = right_children_idxs[span_idx]
+                if not all(finished[c] for c in right_children_ids):
                     continue
 
-                max_score = -math.inf
-                max_arcs = None
+                root_score = self.span_root_score_lst[span_idx]
 
-                for split_group_idx, split_group in enumerate(subtree_splits[span_idx]):
-                    tree_score = self.span_root_score_lst[span_idx]
-                    arcs = []
-                    for subtree_idx in split_group:
-                        tree_score += max_dep[subtree_idx].score
-                        tree_score += self.parent_arc_score_lst[subtree_idx][word_idx]
-                        arcs += max_dep[subtree_idx].dep_arcs
-                        arcs += [(max_dep[subtree_idx].root, word_idx)]
-                    if tree_score > max_score:
-                        max_score = tree_score
-                        max_arcs = arcs
+                # should have left children
+                if word_idx > start:
+                    children_spans = [all_spans[i] for i in left_children_ids]
+                    children_scores = []
+                    for subtree_idx in left_children_ids:
+                        children_scores.append(max_dep[subtree_idx].score +
+                                               self.parent_arc_score_lst[subtree_idx][word_idx])
+                    best_splits, best_score = find_max_splits(start=start, end=word_idx-1,
+                                                              spans=children_spans,
+                                                              scores=children_scores
+                                                              )
+                    best_arcs = []
+                    for subtree_idx in [left_children_ids[i] for i in best_splits]:
+                        best_arcs += max_dep[subtree_idx].dep_arcs
+                        best_arcs.append((max_dep[subtree_idx].root, word_idx, self.parent_tags_idxs_lst[subtree_idx][word_idx]))
+                    left_score = best_score
+                    left_arcs = best_arcs
+                else:
+                    left_score = 0.0
+                    left_arcs = []
 
-                max_dep[span_idx] = SubTreeStruct(word_idx, max_score, max_arcs)
+                # should have right children
+                if word_idx < end:
+                    children_spans = [all_spans[i] for i in right_children_ids]
+                    children_scores = []
+                    for subtree_idx in right_children_ids:
+                        children_scores.append(max_dep[subtree_idx].score +
+                                               self.parent_arc_score_lst[subtree_idx][word_idx])
+                    best_splits, best_score = find_max_splits(start=word_idx+1, end=end,
+                                                              spans=children_spans,
+                                                              scores=children_scores
+                                                              )
+                    best_arcs = []
+                    for subtree_idx in [right_children_ids[i] for i in best_splits]:
+                        best_arcs += max_dep[subtree_idx].dep_arcs
+                        best_arcs.append((max_dep[subtree_idx].root, word_idx, self.parent_tags_idxs_lst[subtree_idx][word_idx]))
+                    right_score = best_score
+                    right_arcs = best_arcs
+                else:
+                    right_score = 0.0
+                    right_arcs = []
+
+                max_dep[span_idx] = SubTreeStruct(word_idx, root_score+left_score+right_score, left_arcs+right_arcs)
+
                 finished[span_idx] = True
 
-            new_finished_count = sum(finished)
-            if new_finished_count == finished_count:
-                raise ValueError(f"can't find valid tree factorization using given spans: {self.span_lst}")
-            finished_count = new_finished_count
         return max_dep[0]

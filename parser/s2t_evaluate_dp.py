@@ -4,7 +4,7 @@
 @contact: yuxian_meng@shannonai.com
 @time: 2021/1/8 10:13
 @desc: Evaluate Span-to-Token dependency as Bottom-Up Dynamic Programming
-
+# todo fix potential bug that after pruning, maybe no valid tree-factorization exists.
 """
 
 import os
@@ -12,12 +12,13 @@ from typing import Dict
 
 import torch
 from tqdm import tqdm
+import math
 
-from parser.data.span_query_dataset import SpanQueryDataset
 from parser.metrics import AttachmentScores
 from parser.s2t_proposal_trainer import MrcS2TProposal
 from parser.s2t_query_trainer import MrcS2TQuery
 from parser.utils.decode_utils import DecodeStruct
+import warnings
 from parser.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -30,9 +31,10 @@ def to_cuda(batch):
 
 proposal_dir = "/userhome/yuxian/train_logs/dependency/ptb/biaf/s2t/proposal"
 proposal_hparams = os.path.join(proposal_dir, "lightning_logs/version_0/hparams.yaml")
+proposal_ckpt = os.path.join(proposal_dir, "epoch=4.ckpt")
 # proposal_dir = "/data/nfsdata2/yuxian/share/parser/proposal/"
 # proposal_hparams = os.path.join(proposal_dir, "version_0/hparams.yaml")
-proposal_ckpt = os.path.join(proposal_dir, "epoch=9.ckpt")
+# proposal_ckpt = os.path.join(proposal_dir, "epoch=9.ckpt")
 
 query_dir = "/userhome/yuxian/train_logs/dependency/ptb/s2t/query_newsep"
 query_hparams = os.path.join(query_dir, "lightning_logs/version_1/hparams.yaml")
@@ -54,7 +56,7 @@ proposal_model = MrcS2TProposal.load_from_checkpoint(
 )
 proposal_model.cuda()
 proposal_model.eval()
-
+dep_tag2idx = {tag: idx for idx, tag in enumerate(proposal_model.args.dep_tags)}
 
 query_model = MrcS2TQuery.load_from_checkpoint(
     checkpoint_path=query_ckpt,
@@ -73,7 +75,7 @@ query_model.eval()
 
 assert proposal_model.args.pos_tags + ["sep_pos"] == query_model.args.pos_tags
 assert proposal_model.args.dep_tags == query_model.args.dep_tags
-
+topk = 2  # use topk starts/ends in inference
 
 with torch.no_grad():
 
@@ -85,7 +87,6 @@ with torch.no_grad():
     ann_infos: Dict[int, DecodeStruct] = {}
 
     proposal_loader = proposal_model.test_dataloader()
-    topk = 5  # use topk starts/ends in inference
     logger.info("Extract subtree proposal ...")
     for batch in tqdm(proposal_loader):
         to_cuda(batch)
@@ -149,8 +150,6 @@ with torch.no_grad():
     logger.info("Finding parents according to extracted subtree proposal")
     parent_scores = {}
     query_loader = query_model.test_dataloader()
-    query_dataset: SpanQueryDataset = query_loader.dataset
-    metric = AttachmentScores()
 
     for k in range(topk):
         logger.info(f"Finding parents according to top{k+1} subtree proposal ...")
@@ -171,6 +170,8 @@ with torch.no_grad():
                 token_ids, type_ids, offsets, wordpiece_mask,
                 pos_tags, word_mask, mrc_mask, parent_idxs, parent_tags
             )
+            parent_tags_scores, parent_tags_idxs = torch.max(parent_tag_probs, dim=-1)
+            parent_probs = parent_probs * parent_tags_scores
 
             bsz = parent_probs.size(0)
             for batch_idx in range(bsz):
@@ -181,24 +182,58 @@ with torch.no_grad():
                 mrc_offset = nwords + 4
                 ann_infos[ann_idx].span2parent_arc_scores[(word_idx, span_start, span_end)] = \
                     parent_probs[batch_idx][mrc_offset: mrc_offset + nwords + 1].cpu().numpy()
+                ann_infos[ann_idx].span2parent_tags_idxs[(word_idx, span_start, span_end)] = \
+                    parent_tags_idxs[batch_idx][mrc_offset: mrc_offset + nwords + 1].cpu().numpy()
 
-    import pickle
-    pickle.dump(ann_infos, open("/userhome/yuxian/data/tmp_scores.pkl", "wb"))
+import pickle
+# save_file = "/userhome/yuxian/data/tmp_scores.pkl"
+# save_file = f"/userhome/yuxian/data/tmp_scores_with_tag_{topk}.pkl"
+save_file = f"/userhome/yuxian/data/tunek_tmp_scores_with_tag_{topk}.pkl"
+pickle.dump(ann_infos, open(save_file, "wb"))
+ann_infos = pickle.load(open(save_file, "rb"))
 
-    logger.info("Decoding final dependency predictions according to subtree-scores and subtree-parent-scores ...")
-    for ann_idx, ann_info in tqdm(ann_infos.items()):
+# for k in [10, 5, 3, 2, 1]:  # used to tune topk value
+for k in [topk]:
+    logger.info(f"Decoding final dependency predictions according to top{k} "
+                "subtree-scores and subtree-parent-scores ...")
+    metric = AttachmentScores()
+    for ann_idx, ann_info in tqdm(list(ann_infos.items())):
+        # use only top k subtrees for decoding
+        topk_subtrees = set()
+        for parent_idx, subtrees in ann_info.span_candidates.items():
+            subtrees = sorted(subtrees, key=lambda x: x[-1], reverse=True)
+            for start, end, _ in subtrees[: k]:
+                topk_subtrees.add((parent_idx, start, end))
+        ann_info = DecodeStruct(
+            words=ann_info.words,
+            span_candidates=ann_info.span_candidates,
+            span2parent_arc_scores={k: v for k, v in ann_info.span2parent_arc_scores.items() if k in topk_subtrees},
+            span2parent_tags_idxs=ann_info.span2parent_tags_idxs,
+            dep_heads=ann_info.dep_heads,
+            dep_tags=ann_info.dep_tags,
+            pos_tags=ann_info.pos_tags
+        )
+        # temporarily skip too long sequence
+        # if len(ann_info.dep_heads) > 30:
+        #     continue
         # print(ann_info)
         decode_tree = ann_info.decode()
         # print(decode_tree)
         # query_dataset.encode_dep_tags(
         gold_heads = ann_info.dep_heads
+        gold_labels = [dep_tag2idx[t] for t in ann_info.dep_tags]
         pred_heads = [0] + gold_heads  # add root
-        for child, parent in decode_tree.dep_arcs:
-            pred_heads[child] = parent
+        pred_labels = [0] + gold_labels
+        if decode_tree.score == -math.inf:
+            # warnings.warn(f"failed to decode valid projective tree by top {topk} subtrees for sample {ann_idx}")
+            raise ValueError(f"failed to decode valid projective tree by top {k} subtrees for sample {ann_idx}")
+            # todo use greedy decoding strategy if this happens
+        else:
+            for child, parent, tag_idx in decode_tree.dep_arcs:
+                pred_heads[child] = parent
+                pred_labels[child] = tag_idx
         pred_heads = pred_heads[1:]  # remove root
-        # todo add labels
-        gold_labels = query_dataset.encode_dep_tags(ann_info.dep_tags)
-        pred_labels = gold_labels
+        pred_labels = pred_labels[1:]
         metric.update(
             torch.LongTensor(pred_heads),
             torch.LongTensor(pred_labels),

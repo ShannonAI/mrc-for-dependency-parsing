@@ -117,11 +117,14 @@ class SpanQueryDataset(BaseDataset):
         mrc_tokens = query_tokens + words
 
         bert_mismatch_fields = self.get_mismatch_token_idx(mrc_tokens)
-
-        self.replace_special_token(bert_mismatch_fields, [span_start], self.SPAN_START)
-        self.replace_special_token(bert_mismatch_fields, [word_idx+1], self.SUBTREE_ROOT_START)
-        self.replace_special_token(bert_mismatch_fields, [word_idx+3], self.SUBTREE_ROOT_END)
-        self.replace_special_token(bert_mismatch_fields, [span_end+4], self.SPAN_END)
+        try:
+            self.replace_special_token(bert_mismatch_fields, [span_start], self.SPAN_START)
+            self.replace_special_token(bert_mismatch_fields, [word_idx+1], self.SUBTREE_ROOT_START)
+            self.replace_special_token(bert_mismatch_fields, [word_idx+3], self.SUBTREE_ROOT_END)
+            self.replace_special_token(bert_mismatch_fields, [span_end+4], self.SPAN_END)
+        except Exception as e:
+            logger.error("replace error, be careful that this should not happen unless you're "
+                         "doing batch prediction at evaluation", exc_info=True)
 
         fields.update(bert_mismatch_fields)
 
