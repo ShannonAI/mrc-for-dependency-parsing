@@ -3,7 +3,7 @@ export TOKENIZERS_PARALLELISM=false
 
 DATA_DIR="/userhome/yuxian/data/parser/ptb3_parser"
 BERT_DIR="/userhome/yuxian/data/bert/roberta-large"
-BERT_TYPE="roberta-large"
+BERT_TYPE="roberta"
 # hyper-params
 DROPOUT=0.3
 LR=1e-5

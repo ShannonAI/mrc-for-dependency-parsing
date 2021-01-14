@@ -33,6 +33,7 @@ class S2SDataset(BaseDataset):
             provided in the conllu format.
         pos_tags: if specified, directly use it instead of counting POS tags from file
         dep_tags: if specified, directly use it instead of counting dependency tags from file
+        bert_name: "roberta" or "bert". if None, we guess type by finding "roberta" in bert path.
     """
 
     SEP_POS = "sep_pos"
@@ -46,6 +47,7 @@ class S2SDataset(BaseDataset):
         use_language_specific_pos: bool = False,
         pos_tags: List[str] = None,
         dep_tags: List[str] = None,
+        bert_name: str = None
     ) -> None:
         super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
 
@@ -59,8 +61,12 @@ class S2SDataset(BaseDataset):
         logger.info(f"pos tags: {self.pos_tag_2idx}")
         logger.info(f"dep tags: {self.dep_tag_2idx}")
 
-        if 'roberta' in bert:
-            self.bert_name = 'roberta'
+        assert bert_name in ["roberta", "bert"]
+        self.bert_name = bert_name
+        if self.bert_name is None:
+            self.bert_name = "roberta" if 'roberta' in bert else "bert"
+
+        if self.bert_name == "roberta":
             self.SEP = "</s>"
             # todo roberta 1/2/3/4 are not unused words like bert!
             self.SPAN_START = 2
@@ -68,7 +74,6 @@ class S2SDataset(BaseDataset):
             self.SUBTREE_ROOT_END = 2
             self.SPAN_END = 2
         else:
-            self.bert_name = 'bert'
             self.SEP = "[SEP]"
             # we use [unused0] ~ [unused3] in bert vocab to represent bracket around query token and query span
             self.SPAN_START = 1
@@ -284,8 +289,10 @@ if __name__ == '__main__':
 
     dataset = S2SDataset(
         # file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/dev.conllx",
-        file_path="sample.conllu",
-        bert="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
+        file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC2005T01/data/ctb5_parser/dev.conllx",
+        # file_path="sample.conllu",
+        # bert="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
+        bert="/data/nfsdata2/nlp_application/models/bert/chinese_L-12_H-768_A-12",
     )
 
     from torch.utils.data import DataLoader
