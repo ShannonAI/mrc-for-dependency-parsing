@@ -20,6 +20,7 @@ import torch
 from parser.data.base_bert_dataset import BaseDataset
 from parser.data.tree_utils import build_subtree_spans
 from parser.utils.logger import get_logger
+from random import randint
 
 logger = get_logger(__name__)
 
@@ -37,18 +38,11 @@ class SpanQueryDataset(BaseDataset):
             provided in the conllu format.
         pos_tags: if specified, directly use it instead of counting POS tags from file
         dep_tags: if specified, directly use it instead of counting dependency tags from file
+        # negative_ratio: negative/positive sample ratio. negative samples are samples that have wrong span query,
+        #     thus has no parent
     """
 
-    # we use [unused0] ~ [unused3] in bert vocab to represent bracket around query token and query span
-    SPAN_START = 1
-    SUBTREE_ROOT_START = 2
-    SUBTREE_ROOT_END = 3
-    SPAN_END = 4
-
     SEP_POS = "sep_pos"
-    SEP = "[SEP]"
-
-    group_file_suffix = ".mrc"
 
     def __init__(
         self,
@@ -57,6 +51,7 @@ class SpanQueryDataset(BaseDataset):
         use_language_specific_pos: bool = False,
         pos_tags: List[str] = None,
         dep_tags: List[str] = None,
+        # negative_ratio: int = 1
     ) -> None:
         super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
 
@@ -69,6 +64,27 @@ class SpanQueryDataset(BaseDataset):
         self.pos_tag_2idx = {l: idx for idx, l in enumerate(self.pos_tags)}
         logger.info(f"pos tags: {self.pos_tag_2idx}")
         logger.info(f"dep tags: {self.dep_tag_2idx}")
+        # self.negative_ratio = negative_ratio
+        # self.group_file_suffix = f".mrc_neg{self.negative_ratio}"
+        self.group_file_suffix = f".mrc"
+
+        if 'roberta' in bert:
+            self.bert_name = 'roberta'
+            self.SEP = "</s>"
+            # todo roberta 1/2/3/4 are not unused words like bert!
+            self.SPAN_START = 2
+            self.SUBTREE_ROOT_START = 2
+            self.SUBTREE_ROOT_END = 2
+            self.SPAN_END = 2
+
+        else:
+            self.bert_name = 'bert'
+            self.SEP = "[SEP]"
+            # we use [unused0] ~ [unused3] in bert vocab to represent bracket around query token and query span
+            self.SPAN_START = 1
+            self.SUBTREE_ROOT_START = 2
+            self.SUBTREE_ROOT_END = 3
+            self.SPAN_END = 4
 
     def build_offsets(self):
         """offsets[i] = (sent_idx, word_idx) of ith mrc-samples."""
@@ -80,7 +96,7 @@ class SpanQueryDataset(BaseDataset):
         return offsets
 
     def __len__(self):
-        return len(self.offsets)
+        return len(self.offsets)# * (1+self.negative_ratio)
 
     def __getitem__(self, idx):
         """
@@ -95,19 +111,43 @@ class SpanQueryDataset(BaseDataset):
             meta_data: dict of meta_fields
             parent_idxs: [1]
             parent_tags: [1]
+            # is_subtree: [1]
         """
+        # sample_idx = idx // (1 + self.negative_ratio)
+        # is_negative = bool(idx % (1 + self.negative_ratio))
+        # idx = sample_idx
+
         ann_idx, word_idx = self.offsets[idx]
         words, pos_tags, dp_tags, dp_heads = self.data[ann_idx]
+
+
         subtree_spans = self.subtree_spans[ann_idx]
         span_start, span_end = subtree_spans[word_idx]
+        # is_subtree = True
+        # # random generate a false span
+        # if is_negative:
+        #     start = randint(0, word_idx)
+        #     end = randint(word_idx, len(words)-1)
+        #     while (start == span_start and end == span_end) and len(words) != 1:
+        #         start = randint(0, word_idx)
+        #         end = randint(word_idx, len(words)-1)
+        #     if start != span_start or end != span_end:
+        #         is_subtree = False
+
         # mrc sample consists of query and context.
         mrc_length = len(words) * 2 + 5
         # query is a copy of origin sentence, with special token surrounding the query-subtree span and root.
         query_length = len(words) + 4
 
-        type_ids = [0] * (len(words) + 5) + [1] * len(words)  # bert sentence-pair token-ids
+        if self.bert_name == 'roberta':
+            type_ids = [0] * (len(words) + 3) + [0] * len(words)  # roberta has no type-ids
+        else:
+            type_ids = [0] * (len(words) + 3) + [1] * len(words)  # bert sentence-pair type-ids
 
-        fields = {"type_ids": torch.LongTensor(type_ids)}
+        fields = {
+            "type_ids": torch.LongTensor(type_ids),
+            # "is_subtree": torch.BoolTensor([is_subtree])
+                  }
 
         query_tokens = deepcopy(words) + [self.SEP]
         query_tokens.insert(span_start, self.SEP)
@@ -139,6 +179,10 @@ class SpanQueryDataset(BaseDataset):
         # only context(and SEP, which represents root) can be parent/child
         mrc_mask[query_length:] = [True] * (len(words) + 1)
         mrc_mask[query_length + word_idx + 1] = False  # origin word cannot be parent/child of itself
+        # parent should be outside of query_span(only in projective case!)
+        # for idx in range(query_length + 1 + span_start, query_length + 1 + span_end + 1):
+        #     if idx < len(mrc_mask):
+        #         mrc_mask[idx] = False
 
         parent_tag = dp_tags[word_idx]
         parent_idx = dp_heads[word_idx]
@@ -160,7 +204,7 @@ class SpanQueryDataset(BaseDataset):
         """get seqence-length of every item"""
         item_lengths = []
         for words, _, _, _ in self.data:
-            item_lengths.extend([len(words)] * len(words))
+            item_lengths.extend([len(words)] * len(words)) # * (1+self.negative_ratio))
         return item_lengths
 
 
@@ -179,6 +223,7 @@ def collate_s2t_data(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Te
             meta_data: dict of meta_fields
             parent_idxs: [1]
             parent_tags: [1]
+            # is_subtree: [1]
     Returns:
         output: dict of batched fields
     """
@@ -187,10 +232,10 @@ def collate_s2t_data(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Te
     max_pieces = max(x["token_ids"].size(0) for x in batch)
     max_words = max(x["pos_tags"].size(0) for x in batch)
 
-    output = {
-        "parent_idxs": torch.cat([x["parent_idxs"] for x in batch]),
-        "parent_tags": torch.cat([x["parent_tags"] for x in batch])
-              }
+    output = {}
+
+    for field in ["parent_idxs", "parent_tags"]:  #, "is_subtree"]:
+        output[field] = torch.cat([x[field] for x in batch])
 
     for field in ["token_ids", "type_ids", "wordpiece_mask"]:
         pad_output = torch.full([batch_size, max_pieces], 0, dtype=batch[0][field].dtype)
@@ -226,9 +271,11 @@ if __name__ == '__main__':
     from torch.utils.data import SequentialSampler
 
     dataset = SpanQueryDataset(
-        # file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/dev.conllx",
-        file_path="sample.conllu",
-        bert="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
+        file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/dev.conllx",
+        # file_path="sample.conllu",
+        # bert="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
+        bert="/data/nfsdata2/nlp_application/models/bert/roberta-large",
+        # negative_ratio=1
     )
 
     from torch.utils.data import DataLoader

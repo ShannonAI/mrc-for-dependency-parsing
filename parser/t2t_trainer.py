@@ -305,6 +305,7 @@ def main():
     model = MrcDependency(args)
 
     # load pretrained_model
+    '''
     if args.pretrained:
         model.load_state_dict(
             torch.load(args.pretrained, map_location=torch.device('cpu'))["state_dict"]
@@ -331,9 +332,12 @@ def main():
         callbacks=callbacks,
         replace_sampler_ddp=False
     )
+    '''
+    trainer = pl.Trainer(resume_from_checkpoint=args.pretrained)
 
     trainer.fit(model)
 
+    trainer.test(model)
 
 if __name__ == '__main__':
     main()
