@@ -13,26 +13,25 @@ import os
 import argparse
 import pytorch_lightning as pl
 import torch
+from allennlp.nn.util import get_range_vector, get_device_of
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
 from transformers import BertConfig, AdamW
-from parser.data.subtree_proposal_dataset import SubTreeProposalDataset, collate_subtree_data
+from transformers.configuration_roberta import RobertaConfig
+from parser.data.s2s_dataset import S2SDataset, collate_s2s_data
 from parser.metrics import *
 from parser.models import *
 from parser.callbacks import *
 from parser.utils.get_parser import get_parser
 from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler
 from parser.data.samplers import GroupedSampler
-from typing import Dict, Union
+from pytorch_lightning.metrics import Accuracy
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-# os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
 
-class MrcS2TProposal(pl.LightningModule):
-    acc_topk = 5  # evaluate topN acc, for every 1<= N <=k
-
-    def __init__(self, args: Union[Dict, argparse.Namespace]):
+class MrcS2SQuery(pl.LightningModule):
+    def __init__(self, args):
         super().__init__()
 
         if not isinstance(args, argparse.Namespace):
@@ -41,8 +40,9 @@ class MrcS2TProposal(pl.LightningModule):
             args = argparse.Namespace(**args)
 
         # compute other fields according to args
-        train_dataset = SubTreeProposalDataset(
+        train_dataset = S2SDataset(
             file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
+            # file_path=os.path.join(args.data_dir, f"sample.{args.data_format}"),
             bert=args.bert_dir
         )
 
@@ -56,8 +56,19 @@ class MrcS2TProposal(pl.LightningModule):
         self.save_hyperparameters(args)
         self.args = args
 
-        bert_config = BertConfig.from_pretrained(args.bert_dir)
-        self.model_config = BertMrcS2TProposalDependencyConfig(
+        bert_name = args.bert_name
+        if bert_name == 'roberta-large':
+            bert_config = RobertaConfig.from_pretrained(args.bert_dir, hidden_dropout_prob=args.bert_dropout)
+            MrcS2SDependencyConfig = RobertaMrcS2SQueryDependencyConfig
+        elif bert_name == 'bert':
+            bert_config = BertConfig.from_pretrained(args.bert_dir, hidden_dropout_prob=args.bert_dropout)
+            MrcS2SDependencyConfig = BertMrcS2SQueryDependencyConfig
+        else:
+            raise ValueError("Unknown bert name!!")
+
+        # bert_config = BertConfig.from_pretrained(args.bert_dir, hidden_dropout_prob=args.bert_dropout)
+
+        self.model_config = MrcS2SDependencyConfig(
             pos_tags=args.pos_tags,
             dep_tags=args.dep_tags,
             pos_dim=args.pos_dim,
@@ -67,26 +78,29 @@ class MrcS2TProposal(pl.LightningModule):
             mrc_dropout=args.mrc_dropout,
             **bert_config.__dict__
         )
-        self.model = BiaffineDependencyS2TProposalParser.from_pretrained(args.bert_dir, config=self.model_config)
+        self.model = BiaffineDependencyS2SQeuryParser.from_pretrained(args.bert_dir, config=self.model_config)
 
         if args.freeze_bert:
             for param in self.model.bert.parameters():
                 param.requires_grad = False
 
-        # self.train_stat = AttachmentScores()
-        # self.val_stat = AttachmentScores() if not self.args.use_mst else T2TAttachmentScores()
-        # self.test_stat = AttachmentScores() if not self.args.use_mst else T2TAttachmentScores()
-        self.train_acc = AllTopkAccuracy(self.acc_topk)
-        self.val_acc = AllTopkAccuracy(self.acc_topk)
-        self.test_acc = AllTopkAccuracy(self.acc_topk)
-
+        self.train_stat = AttachmentScores()
+        self.val_stat = AttachmentScores()
+        self.test_stat = AttachmentScores()
         self.ignore_pos_tags = list(args.ignore_pos_tags)
+
+        self.acc_metrics = {}
+        for phase in ["train", "val", "test"]:
+            for bound in ["start", "end"]:
+                self.acc_metrics[f"{phase}_{bound}_acc"] = Accuracy()
+        self.acc_metrics = torch.nn.ModuleDict(self.acc_metrics)
 
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
         parser.add_argument("--pos_dim", type=int, default=0, help="pos tag dimension")
         parser.add_argument("--mrc_dropout", type=float, default=0.0, help="mrc dropout")
+        parser.add_argument("--bert_dropout", type=float, default=0.1, help="bert dropout")
         parser.add_argument("--additional_layer", type=int, default=0, help="additional encoder layer")
         parser.add_argument("--additional_layer_dim", type=int, default=0, help="additional encoder layer dim")
         parser.add_argument("--additional_layer_type", type=str,
@@ -101,35 +115,57 @@ class MrcS2TProposal(pl.LightningModule):
         return parser
 
     def forward(self, token_ids, type_ids, offsets, wordpiece_mask,
-                pos_tags, word_mask, subtree_spans=None):
+                pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask,
+                parent_idxs=None, parent_tags=None, parent_starts=None, parent_ends=None):
         return self.model(
             token_ids, type_ids, offsets, wordpiece_mask,
-            pos_tags, word_mask, subtree_spans
+            pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask,
+            parent_idxs, parent_tags, parent_starts, parent_ends
         )
 
     def common_step(self, batch, phase="train"):
-        token_ids, type_ids, offsets, wordpiece_mask, pos_tags, word_mask, subtree_spans, meta_data = (
+        (token_ids, type_ids, offsets, wordpiece_mask, pos_tags,
+         word_mask, parent_mask, parent_start_mask, parent_end_mask,
+         meta_data, parent_idxs, parent_tags, parent_starts, parent_ends) = (
             batch["token_ids"], batch["type_ids"], batch["offsets"], batch["wordpiece_mask"],
-            batch["pos_tags"], batch["word_mask"], batch["subtree_spans"], batch["meta_data"]
+            batch["pos_tags"], batch["word_mask"], batch["parent_mask"], batch["parent_start_mask"],
+            batch["parent_end_mask"], batch["meta_data"],
+            batch["parent_idxs"], batch["parent_tags"], batch["parent_starts"], batch["parent_ends"]
         )
-        span_start_scores, span_end_scores, loss = self(
+        (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs,
+         parent_arc_nll, parent_tag_nll, parent_start_nll, parent_end_nll) = self(
             token_ids, type_ids, offsets, wordpiece_mask,
-            pos_tags, word_mask, subtree_spans
+            pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask,
+            parent_idxs, parent_tags, parent_starts, parent_ends
         )
-        bsz, seq_len, _ = span_start_scores.size()
-        # eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
-        # bsz = span_idx.size(0)
-        # # [bsz]
-        # batch_range_vector = get_range_vector(bsz, get_device_of(span_idx))
-        metric = getattr(self, f"{phase}_acc")
-        metric_mask = ~(subtree_spans[:, :, 0].view(-1) == -100)
+        loss = parent_arc_nll + parent_tag_nll + parent_start_nll + parent_end_nll
+        eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
+        bsz = parent_probs.size(0)
+        # [bsz]
+        batch_range_vector = get_range_vector(bsz, get_device_of(parent_tags))
+        eval_mask = eval_mask[batch_range_vector, parent_idxs]  # [bsz]
+
+        pred_positions = parent_probs.argmax(1)
+        metric_name = f"{phase}_stat"
+        metric = getattr(self, metric_name)
         metric.update(
-            preds=span_start_scores.view(bsz*seq_len, -1)[metric_mask],
-            target=subtree_spans[:, :, 0].view(-1)[metric_mask]
+            pred_positions.unsqueeze(-1),  # [bsz, 1]
+            parent_tag_probs[batch_range_vector, pred_positions].argmax(1).unsqueeze(-1),  # [bsz, 1]
+            parent_idxs.unsqueeze(-1),  # [bsz, 1]
+            parent_tags.unsqueeze(-1),  # [bsz, 1]
+            eval_mask.unsqueeze(-1)  # [bsz, 1]
         )
-        metric.update(
-            preds=span_end_scores.view(bsz * seq_len, -1)[metric_mask],
-            target=subtree_spans[:, :, 1].view(-1)[metric_mask]
+
+        start_acc_metric = self.acc_metrics[f"{phase}_start_acc"]
+        start_acc_metric.update(
+            preds=parent_start_probs.argmax(-1),
+            target=parent_starts
+        )
+
+        end_acc_metric = self.acc_metrics[f"{phase}_end_acc"]
+        end_acc_metric.update(
+            preds=parent_end_probs.argmax(-1),
+            target=parent_ends
         )
 
         self.log(f'{phase}_loss', loss)
@@ -145,12 +181,14 @@ class MrcS2TProposal(pl.LightningModule):
         return self.common_step(batch, phase="test")
 
     def log_on_epoch_end(self, phase="train"):
-        metric_name = f"{phase}_acc"
-        metric = getattr(self, metric_name)
-        # self.log(metric_name, metric)
-        metrics = metric.compute()
-        for sub_metric, metric_value in metrics.items():
+        attach_metric = getattr(self, f"{phase}_stat")
+        attach_metrics = attach_metric.compute()
+        for sub_metric, metric_value in attach_metrics.items():
             self.log(f"{phase}_{sub_metric}", metric_value)
+        for bound in ["start", "end"]:
+            metric_name = f"{phase}_{bound}_acc"
+            metric = self.acc_metrics[metric_name].compute()
+            self.log(metric_name, metric)
 
     def training_epoch_end(self, outputs):
         self.log_on_epoch_end("train")
@@ -188,7 +226,7 @@ class MrcS2TProposal(pl.LightningModule):
             return {
                 'optimizer': optimizer,
                 'lr_scheduler': lr_scheduler,
-                'monitor': f'val_top{self.acc_topk}_f1'
+                'monitor': 'val_LAS'
             }
         # linear decay scheduler
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -225,7 +263,7 @@ class MrcS2TProposal(pl.LightningModule):
         return new_mask
 
     def get_dataloader(self, split="train", shuffle=True):
-        dataset = SubTreeProposalDataset(
+        dataset = S2SDataset(
             file_path=os.path.join(self.args.data_dir, f"{split}.{self.args.data_format}"),
             pos_tags=self.args.pos_tags,
             dep_tags=self.args.dep_tags,
@@ -251,16 +289,18 @@ class MrcS2TProposal(pl.LightningModule):
             batch_size=self.args.batch_size,
             num_workers=self.args.workers,
             pin_memory=True,
-            collate_fn=collate_subtree_data
+            collate_fn=collate_s2s_data
         )
 
         return loader
 
     def train_dataloader(self) -> DataLoader:
         return self.get_dataloader("train", shuffle=True)
+        # return self.get_dataloader("sample", shuffle=True)
 
     def val_dataloader(self) -> DataLoader:
         return self.get_dataloader("dev", shuffle=False)
+        # return self.get_dataloader("sample", shuffle=False)
 
     def test_dataloader(self) -> DataLoader:
         return self.get_dataloader("test", shuffle=False)
@@ -273,14 +313,14 @@ def main():
     # args
     # ------------
     parser = get_parser()
-    parser = MrcS2TProposal.add_model_specific_args(parser)
+    parser = MrcS2SQuery.add_model_specific_args(parser)
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
 
     # ------------
     # model
     # ------------
-    model = MrcS2TProposal(args)
+    model = MrcS2SQuery(args)
 
     # load pretrained_model
     if args.pretrained:
@@ -290,7 +330,7 @@ def main():
 
     # call backs
     checkpoint_callback = ModelCheckpoint(
-        monitor=f'val_top{MrcS2TProposal.acc_topk}_acc',
+        monitor='val_UAS',
         dirpath=args.default_root_dir,
         save_top_k=10,
         save_last=True,

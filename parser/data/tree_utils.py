@@ -12,11 +12,13 @@ from typing import List
 
 def build_subtree_spans(dp_heads: List[int]) -> List[List[int]]:
     """
-    build subtree-spans according to dpendency heads
+    build subtree-spans according to dependency heads
     Args:
         dp_heads: dependency heads. dp_heads[i] is the parent idx of words[i].
     Returns:
         subtree_spans: [num_words, 2], subtree start/end(including) offset of each word
+    Notes:
+        We ignore root here, so 0 is the actual first word of one sentence!
     """
     length = len(dp_heads)
     subtree_spans = [[idx, idx] for idx in range(length)]

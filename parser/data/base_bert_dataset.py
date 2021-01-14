@@ -70,7 +70,7 @@ class BaseDataset(Dataset):
                     sample_pos_tags = [x["upostag"] for x in annotation]
                 self.data.append([words, sample_pos_tags, dp_tags, dp_heads])
 
-            logger.info(f"Read {len(self.data)} sentences from conllu dataset at: %s", file_path)
+            logger.info(f"Read {len(self.data)} sentences from conll dataset at: %s", file_path)
 
         self.pos_tags = pos_tags or self.build_label_vocab(chain(*[d[1] for d in self.data]))
         self.pos_tag_2idx = {l: idx for idx, l in enumerate(self.pos_tags)}
@@ -164,5 +164,6 @@ class BaseDataset(Dataset):
         for pos in positions:
             offset = offsets[pos].numpy().tolist()
             if offset[0] != offset[1]:
-                warnings.warn(f"replace normally expect token in `positions` has not been split to pieces")
+                warnings.warn(f"replace normally expect token in `positions` has not been split to pieces."
+                              f"This warning should NOT happen unless during batch prediction at evaluation")
             token_ids[offset[0]] = replace_id

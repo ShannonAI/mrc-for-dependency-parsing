@@ -14,7 +14,7 @@ from allennlp.nn.util import get_range_vector, get_device_of
 from tqdm import tqdm
 
 from parser.metrics import AttachmentScores
-from parser.s2t_proposal_trainer import MrcS2TProposal
+from parser.span_proposal_trainer import MrcSpanProposal
 from parser.s2t_query_trainer import MrcS2TQuery
 from parser.utils.logger import get_logger
 
@@ -35,7 +35,7 @@ query_hparams = os.path.join(query_dir, "lightning_logs/version_1/hparams.yaml")
 # query_hparams = os.path.join(query_dir, "version_1/hparams.yaml")
 query_ckpt = os.path.join(query_dir, "epoch=4.ckpt")
 
-proposal_model = MrcS2TProposal.load_from_checkpoint(
+proposal_model = MrcSpanProposal.load_from_checkpoint(
     checkpoint_path=proposal_ckpt,
     hparams_file=proposal_hparams,
     map_location=None,

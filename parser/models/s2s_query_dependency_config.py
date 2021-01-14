@@ -12,9 +12,9 @@ from typing import List
 from transformers import BertConfig, RobertaConfig
 
 
-class BertMrcS2TQueryDependencyConfig(BertConfig):
+class BertMrcS2SQueryDependencyConfig(BertConfig):
     def __init__(self, pos_tags: List[str], dep_tags: List[str], **kwargs):
-        super(BertMrcS2TQueryDependencyConfig, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.pos_tags = pos_tags
         self.dep_tags = dep_tags
         self.pos_dim = kwargs.get("pos_dim", 0)
@@ -24,9 +24,9 @@ class BertMrcS2TQueryDependencyConfig(BertConfig):
         self.additional_layer_dim = kwargs.get("additional_layer_dim", self.hidden_size) or self.hidden_size
 
 
-class RobertaMrcS2TQueryDependencyConfig(RobertaConfig):
+class RobertaMrcS2SQueryDependencyConfig(RobertaConfig):
     def __init__(self, pos_tags: List[str], dep_tags: List[str], **kwargs):
-        super(RobertaMrcS2TQueryDependencyConfig, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.pos_tags = pos_tags
         self.dep_tags = dep_tags
         self.pos_dim = kwargs.get("pos_dim", 0)
