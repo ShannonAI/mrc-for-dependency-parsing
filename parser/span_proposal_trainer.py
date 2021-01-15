@@ -57,7 +57,7 @@ class MrcSpanProposal(pl.LightningModule):
         self.args = args
 
         bert_name = args.bert_name
-        if bert_name == 'roberta-large':
+        if bert_name == 'roberta':
             bert_config = RobertaConfig.from_pretrained(args.bert_dir)
             ProposalConfig = RoBertaSpanProposalConfig
         elif bert_name == 'bert':

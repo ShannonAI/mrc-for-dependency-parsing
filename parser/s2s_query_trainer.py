@@ -43,7 +43,8 @@ class MrcS2SQuery(pl.LightningModule):
         train_dataset = S2SDataset(
             file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
             # file_path=os.path.join(args.data_dir, f"sample.{args.data_format}"),
-            bert=args.bert_dir
+            bert=args.bert_dir,
+            bert_name=args.bert_name
         )
 
         # save these information to args to convene evaluation.
@@ -57,7 +58,7 @@ class MrcS2SQuery(pl.LightningModule):
         self.args = args
 
         bert_name = args.bert_name
-        if bert_name == 'roberta-large':
+        if bert_name == 'roberta':
             bert_config = RobertaConfig.from_pretrained(args.bert_dir, hidden_dropout_prob=args.bert_dropout)
             MrcS2SDependencyConfig = RobertaMrcS2SQueryDependencyConfig
         elif bert_name == 'bert':
@@ -267,7 +268,8 @@ class MrcS2SQuery(pl.LightningModule):
             file_path=os.path.join(self.args.data_dir, f"{split}.{self.args.data_format}"),
             pos_tags=self.args.pos_tags,
             dep_tags=self.args.dep_tags,
-            bert=self.args.bert_dir
+            bert=self.args.bert_dir,
+            bert_name=self.args.bert_name
         )
         if self.args.num_gpus <= 1:
             sampler = RandomSampler(dataset) if shuffle else SequentialSampler(dataset)
