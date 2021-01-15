@@ -30,7 +30,7 @@ class BiaffineDependencyT2TParser(nn.Module):
     """
 
     def __init__(self, bert_dir, config):
-        super().__init__(bert_dir, config)
+        super().__init__()
 
         self.config = config
 
