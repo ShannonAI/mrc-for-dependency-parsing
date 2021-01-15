@@ -77,6 +77,7 @@ class MrcS2SQuery(pl.LightningModule):
             additional_layer_dim=args.additional_layer_dim,
             additional_layer_type=args.additional_layer_type,
             mrc_dropout=args.mrc_dropout,
+            predict_child=args.predict_child,
             **bert_config.__dict__
         )
         self.model = BiaffineDependencyS2SQeuryParser.from_pretrained(args.bert_dir, config=self.model_config)
@@ -92,7 +93,7 @@ class MrcS2SQuery(pl.LightningModule):
 
         self.acc_metrics = {}
         for phase in ["train", "val", "test"]:
-            for bound in ["start", "end"]:
+            for bound in ["start", "end", "child"]:
                 self.acc_metrics[f"{phase}_{bound}_acc"] = Accuracy()
         self.acc_metrics = torch.nn.ModuleDict(self.acc_metrics)
 
@@ -109,37 +110,48 @@ class MrcS2SQuery(pl.LightningModule):
                             help="additional layer type")
         parser.add_argument("--ignore_punct", action="store_true", help="ignore punct pos when evaluating")
         parser.add_argument("--freeze_bert", action="store_true", help="freeze bert embedding")
+        parser.add_argument("--predict_child", action="store_true", help="predict not only parent, but also children")
         parser.add_argument("--scheduler", default="plateau", choices=["plateau", "linear_decay"],
                             help="scheduler type")
         parser.add_argument("--final_div_factor", type=float, default=1e4,
                             help="final div factor of linear decay scheduler")
         return parser
 
-    def forward(self, token_ids, type_ids, offsets, wordpiece_mask,
-                pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask,
-                parent_idxs=None, parent_tags=None, parent_starts=None, parent_ends=None):
+    def forward(self, token_ids, type_ids, offsets, wordpiece_mask, pos_tags,
+                word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask=None,
+                parent_idxs=None, parent_tags=None, parent_starts=None, parent_ends=None, child_idxs=None):
         return self.model(
             token_ids, type_ids, offsets, wordpiece_mask,
-            pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask,
-            parent_idxs, parent_tags, parent_starts, parent_ends
+            pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask,
+            parent_idxs, parent_tags, parent_starts, parent_ends, child_idxs
         )
 
     def common_step(self, batch, phase="train"):
         (token_ids, type_ids, offsets, wordpiece_mask, pos_tags,
-         word_mask, parent_mask, parent_start_mask, parent_end_mask,
-         meta_data, parent_idxs, parent_tags, parent_starts, parent_ends) = (
+         word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask,
+         meta_data, parent_idxs, parent_tags, parent_starts, parent_ends, child_idxs) = (
             batch["token_ids"], batch["type_ids"], batch["offsets"], batch["wordpiece_mask"],
             batch["pos_tags"], batch["word_mask"], batch["parent_mask"], batch["parent_start_mask"],
-            batch["parent_end_mask"], batch["meta_data"],
-            batch["parent_idxs"], batch["parent_tags"], batch["parent_starts"], batch["parent_ends"]
+            batch["parent_end_mask"], batch["child_mask"], batch["meta_data"],
+            batch["parent_idxs"], batch["parent_tags"],
+            batch["parent_starts"], batch["parent_ends"], batch["child_idxs"]
         )
-        (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs,
-         parent_arc_nll, parent_tag_nll, parent_start_nll, parent_end_nll) = self(
-            token_ids, type_ids, offsets, wordpiece_mask,
-            pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask,
-            parent_idxs, parent_tags, parent_starts, parent_ends
-        )
-        loss = parent_arc_nll + parent_tag_nll + parent_start_nll + parent_end_nll
+        if not self.model_config.predict_child:
+            (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs,
+             parent_arc_nll, parent_tag_nll, parent_start_nll, parent_end_nll) = self(
+                token_ids, type_ids, offsets, wordpiece_mask,
+                pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask,
+                parent_idxs, parent_tags, parent_starts, parent_ends, child_idxs
+            )
+            loss = parent_arc_nll + parent_tag_nll + parent_start_nll + parent_end_nll
+        else:
+            (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs, child_probs,
+             parent_arc_nll, parent_tag_nll, parent_start_nll, parent_end_nll, child_loss) = self(
+                token_ids, type_ids, offsets, wordpiece_mask,
+                pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask,
+                parent_idxs, parent_tags, parent_starts, parent_ends, child_idxs
+            )
+            loss = parent_arc_nll + parent_tag_nll + parent_start_nll + parent_end_nll + child_loss
         eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
         bsz = parent_probs.size(0)
         # [bsz]
@@ -169,6 +181,13 @@ class MrcS2SQuery(pl.LightningModule):
             target=parent_ends
         )
 
+        if self.model_config.predict_child:
+            child_acc_metric = self.acc_metrics[f"{phase}_child_acc"]
+            child_acc_metric.update(
+                preds=child_probs[child_mask],
+                target=child_idxs.long()[child_mask]
+            )
+
         self.log(f'{phase}_loss', loss)
         return loss
 
@@ -186,7 +205,7 @@ class MrcS2SQuery(pl.LightningModule):
         attach_metrics = attach_metric.compute()
         for sub_metric, metric_value in attach_metrics.items():
             self.log(f"{phase}_{sub_metric}", metric_value)
-        for bound in ["start", "end"]:
+        for bound in ["start", "end", "child"]:
             metric_name = f"{phase}_{bound}_acc"
             metric = self.acc_metrics[metric_name].compute()
             self.log(metric_name, metric)

@@ -150,14 +150,14 @@ with torch.no_grad():
             )
 
     # ------
-    # Stage 2: score parents for each subtree span candidates
+    # Stage 2: score parents/children for each subtree span candidates
     # ------
     logger.info("Finding parents according to extracted subtree proposal")
     parent_scores = {}
     query_loader = query_model.test_dataloader()
 
     for k in range(topk):
-        logger.info(f"Finding parents according to top{k+1} subtree proposal ...")
+        logger.info(f"Finding parents/children according to top{k+1} subtree proposal ...")
         subtree_spans = []
         for ann_idx in range(len(ann_infos)):
             ann_info = ann_infos[ann_idx]
@@ -167,19 +167,26 @@ with torch.no_grad():
         for batch in tqdm(query_loader):
             to_cuda(batch)
             (token_ids, type_ids, offsets, wordpiece_mask, pos_tags,
-             word_mask, parent_mask, parent_start_mask, parent_end_mask,
-             meta_data, parent_idxs, parent_tags, parent_starts, parent_ends) = (
+             word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask,
+             meta_data, parent_idxs, parent_tags, parent_starts, parent_ends, child_idxs) = (
                 batch["token_ids"], batch["type_ids"], batch["offsets"], batch["wordpiece_mask"],
                 batch["pos_tags"], batch["word_mask"], batch["parent_mask"], batch["parent_start_mask"],
-                batch["parent_end_mask"], batch["meta_data"],
-                batch["parent_idxs"], batch["parent_tags"], batch["parent_starts"], batch["parent_ends"]
+                batch["parent_end_mask"], batch["child_mask"], batch["meta_data"],
+                batch["parent_idxs"], batch["parent_tags"],
+                batch["parent_starts"], batch["parent_ends"], batch["child_idxs"]
             )
             # Note: since parent_starts/ends here are predicted instead of groundtruth,
             # passing it to model may cause out of index error. Therefore we do not pass it.
-            (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs) = query_model(
-                token_ids, type_ids, offsets, wordpiece_mask,
-                pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask
-            )
+            if not query_model.model_config.predict_child:
+                (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs) = query_model(
+                    token_ids, type_ids, offsets, wordpiece_mask,
+                    pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask
+                )
+            else:
+                (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs, child_probs) = query_model(
+                    token_ids, type_ids, offsets, wordpiece_mask,
+                    pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask
+                )
             parent_tags_scores, parent_tags_idxs = torch.max(parent_tag_probs, dim=-1)
             parent_probs = parent_probs * parent_tags_scores
 
@@ -198,6 +205,9 @@ with torch.no_grad():
                     parent_start_probs[batch_idx][mrc_offset: mrc_offset + nwords + 1].cpu().numpy()
                 ann_infos[ann_idx].span2parent_end_scores[(word_idx, span_start, span_end)] = \
                     parent_end_probs[batch_idx][mrc_offset: mrc_offset + nwords + 1].cpu().numpy()
+                if query_model.model_config.predict_child:
+                    ann_infos[ann_idx].span2child_scores[(word_idx, span_start, span_end)] = \
+                        child_probs[batch_idx][mrc_offset: mrc_offset + nwords + 1].cpu().numpy()
 
 
 import pickle

@@ -22,6 +22,7 @@ class BertMrcS2SQueryDependencyConfig(BertConfig):
         self.additional_layer = kwargs.get("additional_layer", 0)
         self.additional_layer_type = kwargs.get("additional_layer_type", "lstm")
         self.additional_layer_dim = kwargs.get("additional_layer_dim", self.hidden_size) or self.hidden_size
+        self.predict_child = kwargs.get("predict_child", False)
 
 
 class RobertaMrcS2SQueryDependencyConfig(RobertaConfig):
@@ -34,3 +35,4 @@ class RobertaMrcS2SQueryDependencyConfig(RobertaConfig):
         self.additional_layer = kwargs.get("additional_layer", 0)
         self.additional_layer_type = kwargs.get("additional_layer_type", "lstm")
         self.additional_layer_dim = kwargs.get("additional_layer_dim", self.hidden_size) or self.hidden_size
+        self.predict_child = kwargs.get("predict_child", False)

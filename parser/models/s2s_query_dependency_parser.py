@@ -83,7 +83,8 @@ class BiaffineDependencyS2SQeuryParser(BertPreTrainedModel):
         self.parent_end_feedforward = nn.Linear(hidden_size, 1)
         self.parent_tag_feedforward = nn.Linear(hidden_size, num_dep_labels)
 
-        # self.child_feedforward = nn.Linear(hidden_size, 1)
+        if config.predict_child:
+            self.child_feedforward = nn.Linear(hidden_size, 1)
 
         # self._dropout = nn.Dropout(config.mrc_dropout)
         self._dropout = InputVariationalDropout(config.mrc_dropout)
@@ -119,11 +120,12 @@ class BiaffineDependencyS2SQeuryParser(BertPreTrainedModel):
         parent_mask: torch.BoolTensor,
         parent_start_mask: torch.BoolTensor,
         parent_end_mask: torch.BoolTensor,
+        child_mask: torch.BoolTensor = None,
         parent_idxs: torch.LongTensor = None,
         parent_tags: torch.LongTensor = None,
         parent_starts: torch.BoolTensor = None,
         parent_ends: torch.BoolTensor = None,
-        # child_idxs: torch.BoolTensor = None,
+        child_idxs: torch.BoolTensor = None,
     ):
         """  todo implement docstring
         Args:
@@ -140,7 +142,7 @@ class BiaffineDependencyS2SQeuryParser(BertPreTrainedModel):
             parent_tags: [batch_size]
             parent_starts: [batch_size]
             parent_ends: [batch_size]
-            # child_idxs: [batch_size, num_words]
+            child_idxs: [batch_size, num_words]
         Returns:
             parent_probs: [batch_size, num_words]
             parent_tag_probs: [batch_size, num_words, num_tags]
@@ -174,9 +176,10 @@ class BiaffineDependencyS2SQeuryParser(BertPreTrainedModel):
 
         if self.additional_encoder is not None:
             if self.config.additional_layer_type == "transformer":
-                extended_attention_mask = self.bert.get_extended_attention_mask(word_mask,
-                                                                                word_mask.size(),
-                                                                                word_mask.device)
+                bert = self.bert if self.arch == "bert" else self.roberta
+                extended_attention_mask = bert.get_extended_attention_mask(word_mask,
+                                                                           word_mask.size(),
+                                                                           word_mask.device)
                 encoded_text = self.additional_encoder(hidden_states=embedded_text_input,
                                                        attention_mask=extended_attention_mask)[0]
             else:
@@ -193,7 +196,7 @@ class BiaffineDependencyS2SQeuryParser(BertPreTrainedModel):
         parent_scores = self.parent_feedforward(encoded_text).squeeze(-1)
         parent_start_scores = self.parent_start_feedforward(encoded_text).squeeze(-1)
         parent_end_scores = self.parent_end_feedforward(encoded_text).squeeze(-1)
-        # child_scores = self.child_feedforward(encoded_text).squeeze(-1)
+
 
         # mask out impossible positions
         minus_inf = -1e8
@@ -210,6 +213,17 @@ class BiaffineDependencyS2SQeuryParser(BertPreTrainedModel):
         parent_tag_probs = F.softmax(parent_tag_scores, dim=-1)
 
         output = (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs)
+
+        if self.config.predict_child:
+            child_scores = self.child_feedforward(encoded_text).squeeze(-1)
+            # todo add child mask - child should be inside the origin span
+            if child_mask is None:
+                child_mask = torch.ones_like(word_mask)
+            else:
+                child_mask = torch.logical_and(child_mask, word_mask)
+            child_scores = child_scores + (~child_mask).float() * minus_inf
+            child_probs = torch.sigmoid(child_scores)
+            output = output + (child_probs, )
 
         # add losses
         batch_range_vector = get_range_vector(batch_size, get_device_of(encoded_text))  # [bsz]
@@ -236,6 +250,11 @@ class BiaffineDependencyS2SQeuryParser(BertPreTrainedModel):
             parent_end_logits = F.log_softmax(parent_end_scores, dim=-1)
             parent_end_nll = -parent_end_logits[batch_range_vector, parent_ends].mean()
             output = output + (parent_end_nll,)
+
+        if self.config.predict_child and child_idxs is not None:
+            child_loss = F.binary_cross_entropy_with_logits(child_scores, child_idxs.float(), reduction="none")
+            child_loss = (child_loss * child_mask).sum() / (child_mask.sum() + 1e-8)
+            output = output + (child_loss, )
 
         return output
 
@@ -279,6 +298,7 @@ if __name__ == '__main__':
         additional_layer_dim=800,
         pos_dim=100,
         mrc_dropout=0.3,
+        predict_child=True,
         **bert_config.__dict__
     )
     mrc_dep = BiaffineDependencyS2SQeuryParser.from_pretrained(
@@ -293,7 +313,7 @@ if __name__ == '__main__':
     wordpiece_mask = wordpiece_mask.bool()
     offsets = torch.ones([bsz, num_words, 2], dtype=torch.long)
     pos_tags = torch.ones([bsz, num_words], dtype=torch.long)
-    parent_start_mask = parent_end_mask = parent_mask = word_mask = pos_tags.bool()
+    child_idxs = parent_start_mask = parent_end_mask = parent_mask = word_mask = pos_tags.bool()
     parent_start = parent_end = parent_idxs = parent_tags = torch.ones([bsz], dtype=torch.long)
 
     y = mrc_dep(
@@ -309,6 +329,7 @@ if __name__ == '__main__':
         parent_tags,
         parent_idxs,
         parent_start,
-        parent_end
+        parent_end,
+        child_idxs
     )
     print(y)

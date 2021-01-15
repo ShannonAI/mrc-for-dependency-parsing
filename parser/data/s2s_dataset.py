@@ -220,7 +220,10 @@ class S2SDataset(BaseDataset):
         for idx in range(span_start, span_end+1):
             if idx == word_idx:
                 continue
-            child_mask[query_length+1+idx] = True
+            idx = query_length + 1 + idx
+            if idx >= mrc_length:
+                continue
+            child_mask[idx] = True
         fields["child_mask"] = torch.BoolTensor(child_mask)
 
         fields["pos_tags"] = torch.LongTensor(mrc_pos_tag_idxs)
