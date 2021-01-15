@@ -21,15 +21,15 @@ from allennlp.nn.util import (
 from allennlp.nn.util import get_range_vector
 from overrides import overrides
 from torch import nn
-from transformers import BertModel, BertPreTrainedModel
+from transformers import BertModel, BertPreTrainedModel, RobertaModel
 from transformers.modeling_bert import BertEncoder
 
-from parser.models.biaffine_dependency_config import BertDependencyConfig
+from parser.models.biaffine_dependency_config import BertDependencyConfig, RobertaDependencyConfig 
 
 logger = logging.getLogger(__name__)
 
 
-class BiaffineDependencyParser(BertPreTrainedModel):
+class BiaffineDependencyParser(nn.Module):
     """
     This dependency parser follows the model of
     [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)]
@@ -37,8 +37,8 @@ class BiaffineDependencyParser(BertPreTrainedModel):
     But we use BERT for embedding
     """
 
-    def __init__(self, config: BertDependencyConfig):
-        super().__init__(config)
+    def __init__(self, bert_dir, config):
+        super().__init__()
 
         self.config = config
 
@@ -57,8 +57,11 @@ class BiaffineDependencyParser(BertPreTrainedModel):
                 self.fuse_layer = None
         else:
             self.pos_embedding = None
-
-        self.bert = BertModel(config)
+            
+        if isinstance(config, BertDependencyConfig):
+            self.bert = BertModel.from_pretrained(bert_dir, config=self.config)
+        elif isinstance(config, RobertaDependencyConfig):
+            self.bert = RobertaModel.from_pretrained(bert_dir, config=self.config)
 
         if config.additional_layer > 0:
             if config.additional_layer_type == "transformer":
