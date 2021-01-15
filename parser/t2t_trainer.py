@@ -335,7 +335,7 @@ def main():
 
     trainer.fit(model)
 
-    trainer.test(model)
+    trainer.test()
 
 if __name__ == '__main__':
     main()

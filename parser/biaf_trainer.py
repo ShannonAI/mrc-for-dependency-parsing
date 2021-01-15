@@ -16,7 +16,7 @@ import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
-from transformers import BertConfig, AdamW
+from transformers import BertConfig, AdamW, RobertaConfig
 from parser.data.dependency_reader import DependencyDataset, collate_dependency_data
 from parser.metrics import *
 from parser.models import *
@@ -24,7 +24,7 @@ from parser.callbacks import *
 from parser.utils.get_parser import get_parser
 from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler
 from parser.data.samplers import GroupedSampler
-
+from parser.models.biaffine_dependency_config import RobertaDependencyConfig
 
 class BiafDependency(pl.LightningModule):
     def __init__(self, args):
@@ -49,21 +49,29 @@ class BiafDependency(pl.LightningModule):
 
         self.save_hyperparameters(args)
         self.args = args
+        
+        bert_name = args.bert_name
+        if bert_name == 'roberta-large':
+            bert_config = RobertaConfig.from_pretrained(args.bert_dir)
+            DependencyConfig = RobertaDependencyConfig
+        elif bert_name == 'bert':
+            bert_config = BertConfig.from_pretrained(args.bert_dir)
+            DependencyConfig = BertDependencyConfig
+        else:
+            raise ValueError("Unknown bert name!!")
 
-        bert_config = BertConfig.from_pretrained(args.bert_dir)
-        self.model_config = BertDependencyConfig(
+        self.model_config = DependencyConfig(
             pos_tags=args.pos_tags,
             dep_tags=args.dep_tags,
             pos_dim=args.pos_dim,
             additional_layer=args.additional_layer,
             additional_layer_dim=args.additional_layer_dim,
             additional_layer_type=args.additional_layer_type,
-            arc_representation_dim=args.arc_representation_dim,
-            tag_representation_dim=args.tag_representation_dim,
-            biaf_dropout=args.biaf_dropout,
+            mrc_dropout=args.mrc_dropout,
             **bert_config.__dict__
         )
-        self.model = BiaffineDependencyParser.from_pretrained(args.bert_dir, config=self.model_config)
+
+        self.model = BiaffineDependencyParser(args.bert_dir, config=self.model_config)
 
         if args.freeze_bert:
             for param in self.model.bert.parameters():
@@ -297,6 +305,7 @@ def main():
     )
     trainer.fit(model)
 
+    trainer.test()
 
 if __name__ == '__main__':
     main()
