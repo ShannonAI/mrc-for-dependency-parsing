@@ -21,7 +21,7 @@ from parser.models.t2t_dependency_config import BertMrcT2TDependencyConfig, Robe
 logger = logging.getLogger(__name__)
 
 
-class BiaffineDependencyT2TParser(BertPreTrainedModel):
+class BiaffineDependencyT2TParser(nn.Module):
     """
     This dependency parser follows the model of
     [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)]
@@ -29,8 +29,8 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
     But We use token-to-token MRC to extract parent and labels
     """
 
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, bert_dir, config):
+        super().__init__(bert_dir, config)
 
         self.config = config
 
@@ -51,9 +51,9 @@ class BiaffineDependencyT2TParser(BertPreTrainedModel):
             self.pos_embedding = None
         
         if isinstance(config, BertMrcT2TDependencyConfig):
-            self.bert = BertModel(config)
+            self.bert = BertModel.from_pretrained(bert_dir, config=self.config)
         elif isinstance(config, RobertaMrcT2TDependencyConfig):
-            self.bert = RobertaModel(config)
+            self.bert = RobertaModel.from_pretrained(bert_dir, config=self.config)
 
         if config.additional_layer > 0:
             if config.additional_layer_type == "transformer":

@@ -75,7 +75,7 @@ class MrcDependency(pl.LightningModule):
             mrc_dropout=args.mrc_dropout,
             **bert_config.__dict__
         )
-        self.model = BiaffineDependencyT2TParser.from_pretrained(args.bert_dir, config=self.model_config)
+        self.model = BiaffineDependencyT2TParser(args.bert_dir, config=self.model_config)
 
         if args.freeze_bert:
             for param in self.model.bert.parameters():
@@ -305,7 +305,7 @@ def main():
     model = MrcDependency(args)
 
     # load pretrained_model
-    '''
+
     if args.pretrained:
         model.load_state_dict(
             torch.load(args.pretrained, map_location=torch.device('cpu'))["state_dict"]
@@ -332,8 +332,6 @@ def main():
         callbacks=callbacks,
         replace_sampler_ddp=False
     )
-    '''
-    trainer = pl.Trainer(resume_from_checkpoint=args.pretrained)
 
     trainer.fit(model)
 
