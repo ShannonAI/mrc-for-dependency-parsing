@@ -70,7 +70,7 @@ class DependencyT2TDataset(BaseDataset):
         assert bert_name in ["roberta", "bert"]
         self.bert_name = bert_name
 
-        if self.bert_name = "roberta":
+        if self.bert_name == "roberta":
             self.SEP = "</s>"
             self.SPAN_START = 1
             self.SPAN_END = 2
