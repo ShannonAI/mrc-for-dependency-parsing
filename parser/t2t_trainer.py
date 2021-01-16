@@ -253,7 +253,8 @@ class MrcDependency(pl.LightningModule):
             file_path=os.path.join(self.args.data_dir, f"{split}.{self.args.data_format}"),
             pos_tags=self.args.pos_tags,
             dep_tags=self.args.dep_tags,
-            bert=self.args.bert_dir
+            bert=self.args.bert_dir, 
+            bert_name=self.args.bert_name
         )
         if self.args.num_gpus <= 1:
             sampler = RandomSampler(dataset) if shuffle else SequentialSampler(dataset)

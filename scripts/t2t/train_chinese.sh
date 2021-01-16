@@ -23,7 +23,7 @@ python parser/t2t_trainer.py \
 --pos_dim 100 \
 --bert_dir $BERT_DIR \
 --additional_layer $LAYER \
---additional_layer_dim 1124 \
+--additional_layer_dim 868 \
 --mrc_dropout $MRC_DROPOUT \
 --workers 12 \
 --gpus="0,1,2,3" \
