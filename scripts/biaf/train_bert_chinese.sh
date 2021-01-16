@@ -11,7 +11,7 @@ LAYER=0
 warmup=300
 
 TIME_DIR="`date +%Y%m%d`"
-OUTPUT_DIR="train_logs/dependency/ptb/biaf/${TIME_DIR}/finetune/chinese/bert_lr${LR}_drop${DROPOUT}_layer${LAYER}_warmup${warmup}_newinit"
+OUTPUT_DIR="train_logs/dependency/ctb/biaf/${TIME_DIR}/finetune/bert_lr${LR}_drop${DROPOUT}_layer${LAYER}_warmup${warmup}_newinit"
 mkdir -p $OUTPUT_DIR
 
 python parser/biaf_trainer.py \
