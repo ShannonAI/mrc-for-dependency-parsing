@@ -67,7 +67,9 @@ class BiafDependency(pl.LightningModule):
             additional_layer=args.additional_layer,
             additional_layer_dim=args.additional_layer_dim,
             additional_layer_type=args.additional_layer_type,
-            mrc_dropout=args.biaf_dropout,
+            arc_reprepsentation_dim=args.arc_representation_dim,
+            tag_reprepsentation_dim=args.tag_representation_dim,
+            biaf_dropout=args.biaf_dropout,
             **bert_config.__dict__
         )
 
