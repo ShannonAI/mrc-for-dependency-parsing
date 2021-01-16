@@ -3,8 +3,7 @@
 @author: Yuxian Meng
 @contact: yuxian_meng@shannonai.com
 @time: 2021/1/8 10:13
-@desc: Evaluate Span-to-Token dependency as Bottom-Up Dynamic Programming
-# todo fix potential bug that after pruning, maybe no valid tree-factorization exists.
+@desc: Evaluate Span-to-Span dependency as Bottom-Up Dynamic Programming
 """
 
 import os
