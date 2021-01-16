@@ -59,7 +59,6 @@ class DependencyT2TDataset(BaseDataset):
 
         self.max_length = max_length
 
-        
         self.offsets = self.build_offsets()
         logger.info(f"build {len(self.offsets)} mrc-samples from {file_path}")
 
