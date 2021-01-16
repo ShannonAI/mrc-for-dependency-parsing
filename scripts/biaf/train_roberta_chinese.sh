@@ -2,7 +2,7 @@ export PYTHONPATH="$PWD"
 export TOKENIZERS_PARALLELISM=false
 
 DATA_DIR="/userhome/yuxian/data/parser/ctb5_parser"
-BERT_DIR="/userhome/ganleilei/data/bert/chinese-roberta-wwm-ext-large"
+BERT_DIR="/userhome/ganleilei/data/bert/hfl/chinese-roberta-wwm-ext-large"
 
 # hyper-params
 DROPOUT=0.3
