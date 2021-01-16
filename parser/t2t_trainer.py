@@ -42,7 +42,8 @@ class MrcDependency(pl.LightningModule):
         # compute other fields according to args
         train_dataset = DependencyT2TDataset(
             file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
-            bert=args.bert_dir
+            bert=args.bert_dir, 
+            bert_name=args.bert_name
         )
 
         # save these information to args to convene evaluation.
