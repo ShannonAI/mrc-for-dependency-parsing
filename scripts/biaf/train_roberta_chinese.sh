@@ -2,7 +2,7 @@ export PYTHONPATH="$PWD"
 export TOKENIZERS_PARALLELISM=false
 
 DATA_DIR="/userhome/yuxian/data/parser/ctb5_parser"
-BERT_DIR="/userhome/ganleilei/data/bert/roberta-large"
+BERT_DIR="/userhome/ganleilei/data/bert/chinese-roberta-wwm-ext-large"
 
 # hyper-params
 DROPOUT=0.3
@@ -11,7 +11,7 @@ LAYER=0
 warmup=300
 
 TIME_DIR="`date +%Y%m%d`"
-OUTPUT_DIR="train_logs/dependency/ptb/biaf/20210114/finetune/lr${LR}_drop${DROPOUT}_layer${LAYER}_warmup${warmup}_newinit"
+OUTPUT_DIR="train_logs/dependency/ptb/biaf/${TIME_DIR}/finetune/chinese/roberta_lr${LR}_drop${DROPOUT}_layer${LAYER}_warmup${warmup}_newinit"
 mkdir -p $OUTPUT_DIR
 
 python parser/biaf_trainer.py \
