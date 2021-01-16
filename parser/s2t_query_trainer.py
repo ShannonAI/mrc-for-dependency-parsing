@@ -57,7 +57,7 @@ class MrcS2TQuery(pl.LightningModule):
         self.args = args
 
         bert_name = args.bert_name
-        if bert_name == 'roberta-large':
+        if bert_name == 'roberta':
             bert_config = RobertaConfig.from_pretrained(args.bert_dir)
             MrcS2TDependencyConfig = RobertaMrcS2TQueryDependencyConfig
         elif bert_name == 'bert':

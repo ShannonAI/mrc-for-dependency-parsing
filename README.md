@@ -16,7 +16,6 @@ Codes for dependency parsing, including following models:
     - [ ] 加反向的分数
     - [ ] 在dp decoding时加入is_subtree的score
     - [ ] 在argparser里支持是否加入is_subtree/反向计算分数
-    - [ ] 支持roberta
     - [ ] 做实验，在dp decode时候把gt推进去是否会变好
     - [ ] add dropout/weight-decay of bert
     - [ ] proposal+query都换用roberta
@@ -25,7 +24,10 @@ Codes for dependency parsing, including following models:
     - [ ] 支持roberta(proposal+query)
     - [ ] add backward score
     - [ ] 回头检查t2t低的原因，比如改decoder的结构变为biaffine
-    - [ ] 后面多加一层transformer(看看别人代码怎么搞的)
+    - [ ] 后面多加1-n层transformer
+    - [ ] 加label smoothing
+    - [ ] decode的topk拉大看效果
+    - [ ] remove too long data in chinese version
 
 ## Requirements
 * python>=3.6

@@ -10,7 +10,7 @@ def get_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(description="Training")
     parser.add_argument("--bert_name", type=str, default="bert",
-                        choices=["bert", "roberta-large"])
+                        choices=["bert", "roberta"])
     parser.add_argument("--data_dir", type=str, required=True, help="data dir")
     parser.add_argument("--data_format", type=str, choices=["conllu", "conllx"],
                         default="conllu", help="data format")

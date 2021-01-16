@@ -17,6 +17,7 @@ import warnings
 from parser.data.base_bert_dataset import BaseDataset
 from parser.data.tree_utils import build_subtree_spans
 from parser.utils.logger import get_logger
+from random import randint
 
 logger = get_logger(__name__)
 
@@ -33,6 +34,10 @@ class S2SDataset(BaseDataset):
             provided in the conllu format.
         pos_tags: if specified, directly use it instead of counting POS tags from file
         dep_tags: if specified, directly use it instead of counting dependency tags from file
+        bert_name: "roberta" or "bert". if None, we guess type by finding "roberta" in bert path.
+        max_length: max length in a sample, because bert has a maximum length of 512. if one sample's
+        length after tokenization is larger than max_length, we randomly choose another sample
+        # todo: make sure this does not happen during test
     """
 
     SEP_POS = "sep_pos"
@@ -46,9 +51,11 @@ class S2SDataset(BaseDataset):
         use_language_specific_pos: bool = False,
         pos_tags: List[str] = None,
         dep_tags: List[str] = None,
+        bert_name: str = None,
+        max_length: int = 512
     ) -> None:
         super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
-
+        self.max_length = max_length
         self.subtree_spans = [build_subtree_spans(d[3]) for d in self.data]
 
         self.offsets = self.build_offsets()
@@ -59,8 +66,12 @@ class S2SDataset(BaseDataset):
         logger.info(f"pos tags: {self.pos_tag_2idx}")
         logger.info(f"dep tags: {self.dep_tag_2idx}")
 
-        if 'roberta' in bert:
-            self.bert_name = 'roberta'
+        assert bert_name in ["roberta", "bert"]
+        self.bert_name = bert_name
+        if self.bert_name is None:
+            self.bert_name = "roberta" if 'roberta' in bert else "bert"
+
+        if self.bert_name == "roberta":
             self.SEP = "</s>"
             # todo roberta 1/2/3/4 are not unused words like bert!
             self.SPAN_START = 2
@@ -68,7 +79,6 @@ class S2SDataset(BaseDataset):
             self.SUBTREE_ROOT_END = 2
             self.SPAN_END = 2
         else:
-            self.bert_name = 'bert'
             self.SEP = "[SEP]"
             # we use [unused0] ~ [unused3] in bert vocab to represent bracket around query token and query span
             self.SPAN_START = 1
@@ -100,6 +110,7 @@ class S2SDataset(BaseDataset):
             parent_mask: [num_words]: True if this position can be parent word_idx, otherwise False
             parent_start_mask: [num_words]: True if this position can be parent subtree start, otherwise False
             parent_end_mask: [num_words]: True if this position can be parent subtree end, otherwise False
+            child_mask: [num_words]: True if this position can be child subtree root, otherwise False
             meta_data: dict of meta_fields
             parent_idxs: [1]
             parent_tags: [1]
@@ -140,6 +151,10 @@ class S2SDataset(BaseDataset):
             #              "doing batch prediction at evaluation", exc_info=True)
 
         fields.update(bert_mismatch_fields)
+
+        if len(bert_mismatch_fields["token_ids"]) > self.max_length:
+            warnings.warn(f"sample id {idx} exceeds max-length {self.max_length}")
+            return self[randint(0, len(self)-1)]
 
         query_pos_tags = pos_tags.copy() + [self.SEP_POS]
         for p in [word_idx, word_idx+1, word_idx+3, word_idx+4]:
@@ -200,6 +215,14 @@ class S2SDataset(BaseDataset):
                 child_flags[child_idx + query_length+1] = 1
         fields["child_idxs"] = torch.BoolTensor(child_flags)
 
+        child_mask = [False] * mrc_length
+        # child should be inside parent span
+        for idx in range(span_start, span_end+1):
+            if idx == word_idx:
+                continue
+            child_mask[query_length+1+idx] = True
+        fields["child_mask"] = torch.BoolTensor(child_mask)
+
         fields["pos_tags"] = torch.LongTensor(mrc_pos_tag_idxs)
         fields["meta_data"] = {
             "words": words,
@@ -232,6 +255,7 @@ def collate_s2s_data(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Te
             parent_mask: [num_words]
             parent_start_mask: [num_words]
             parent_end_mask: [num_words]
+            child_mask: [num_words]
             meta_data: dict of meta_fields
             parent_idxs: [1]
             parent_tags: [1]
@@ -256,7 +280,8 @@ def collate_s2s_data(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Te
             pad_output[sample_idx][: data.shape[0]] = data
         output[field] = pad_output
 
-    for field in ["pos_tags", "word_mask", "parent_start_mask", "parent_end_mask", "parent_mask", "child_idxs"]:
+    for field in ["pos_tags", "word_mask", "parent_start_mask",
+                  "parent_end_mask", "parent_mask", "child_idxs", "child_mask"]:
         pad_output = torch.full([batch_size, max_words], 0, dtype=batch[0][field].dtype)
         for sample_idx in range(batch_size):
             data = batch[sample_idx][field]
@@ -284,8 +309,10 @@ if __name__ == '__main__':
 
     dataset = S2SDataset(
         # file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/dev.conllx",
-        file_path="sample.conllu",
-        bert="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
+        file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC2005T01/data/ctb5_parser/test.conllx",
+        # file_path="sample.conllu",
+        # bert="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
+        bert="/data/nfsdata2/nlp_application/models/bert/chinese_L-12_H-768_A-12",
     )
 
     from torch.utils.data import DataLoader
