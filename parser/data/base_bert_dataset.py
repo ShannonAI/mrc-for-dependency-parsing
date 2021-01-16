@@ -17,6 +17,7 @@ import warnings
 from allennlp.data.token_indexers import PretrainedTransformerIndexer
 from conllu import parse_incr
 from torch.utils.data import Dataset
+import codecs
 
 from parser.data.samplers.grouped_sampler import create_lengths_groups
 from parser.utils.logger import get_logger
@@ -56,7 +57,7 @@ class BaseDataset(Dataset):
         self.use_language_specific_pos = use_language_specific_pos
         self.file_path = file_path
         self.data = []  # list of (words, pos_tags, dp_tags, dp_heads)
-        with open(file_path, "r") as conllu_file:
+        with codecs.open(file_path, "r", "utf-8") as conllu_file:
             logger.info(f"Reading sentences from conll dataset at: {file_path} ...")
             for ann_idx, annotation in enumerate(parse_incr(conllu_file)):
                 annotation = [x for x in annotation if isinstance(x["id"], int)]

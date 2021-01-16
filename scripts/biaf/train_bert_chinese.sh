@@ -15,6 +15,7 @@ OUTPUT_DIR="train_logs/dependency/ptb/biaf/${TIME_DIR}/finetune/chinese/bert_lr$
 mkdir -p $OUTPUT_DIR
 
 python parser/biaf_trainer.py \
+--bert_name "bert" \
 --default_root_dir $OUTPUT_DIR \
 --data_dir $DATA_DIR \
 --data_format 'conllx' \

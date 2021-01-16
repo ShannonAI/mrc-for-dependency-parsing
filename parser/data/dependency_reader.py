@@ -47,7 +47,7 @@ class DependencyDataset(BaseDataset):
         super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
         logger.info(f"pos tags: {self.pos_tag_2idx}")
         logger.info(f"dep tags: {self.dep_tag_2idx}")
-        self.max_epochs = max_length
+        self.max_length = max_length
 
     def __getitem__(self, idx):
         """

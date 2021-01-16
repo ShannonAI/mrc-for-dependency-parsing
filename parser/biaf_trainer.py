@@ -34,7 +34,7 @@ class BiafDependency(pl.LightningModule):
             # eval mode
             assert isinstance(args, dict)
             args = argparse.Namespace(**args)
-
+            
         # compute other fields according to args
         train_dataset = DependencyDataset(
             file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
