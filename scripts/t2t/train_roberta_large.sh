@@ -35,5 +35,4 @@ python parser/t2t_trainer.py \
 --ignore_punct \
 --max_epochs 30 \
 --group_sample \
---scheduler "linear_decay" --warmup_steps $WARMUP --final_div_factor 10 \
---pretrained ""
+--scheduler "linear_decay" --warmup_steps $WARMUP --final_div_factor
