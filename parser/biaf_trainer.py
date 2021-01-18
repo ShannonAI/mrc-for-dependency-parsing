@@ -14,7 +14,7 @@ import os
 import argparse
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, early_stopping
 from torch.utils.data import DataLoader
 from transformers import BertConfig, AdamW, RobertaConfig
 from parser.data.dependency_reader import DependencyDataset, collate_dependency_data
@@ -294,9 +294,17 @@ def main():
         verbose=True
     )
 
+    early_stop_callback = early_stopping.EarlyStopping(
+        monitor='val_UAS',
+        min_delta=0.00,
+        patience=10,
+        verbose=True,
+        mode='max'
+    )
+
     lr_monitor = LearningRateMonitor(logging_interval='step')
     print_model = ModelPrintCallback(print_modules=["model"])
-    callbacks = [checkpoint_callback, lr_monitor, print_model]
+    callbacks = [checkpoint_callback, lr_monitor, print_model, early_stop_callback]
     if args.freeze_bert:
         callbacks.append(EvalCallback(["model.bert"]))
 
