@@ -66,10 +66,10 @@ class S2SDataset(BaseDataset):
         logger.info(f"pos tags: {self.pos_tag_2idx}")
         logger.info(f"dep tags: {self.dep_tag_2idx}")
 
-        assert bert_name in ["roberta", "bert"]
         self.bert_name = bert_name
         if self.bert_name is None:
             self.bert_name = "roberta" if 'roberta' in bert else "bert"
+        assert self.bert_name in ["roberta", "bert"]
 
         if self.bert_name == "roberta":
             self.SEP = "</s>"
@@ -110,13 +110,15 @@ class S2SDataset(BaseDataset):
             parent_mask: [num_words]: True if this position can be parent word_idx, otherwise False
             parent_start_mask: [num_words]: True if this position can be parent subtree start, otherwise False
             parent_end_mask: [num_words]: True if this position can be parent subtree end, otherwise False
-            child_mask: [num_words]: True if this position can be child subtree root, otherwise False
+            child_mask: [num_words]: True if this position can be child subtree root/start/end, otherwise False
             meta_data: dict of meta_fields
             parent_idxs: [1]
             parent_tags: [1]
             parent_starts: [1]
             parent_ends: [1]
             child_idxs: [num_words]: True if this position is a subtree-child of query span, otherwise False
+            child_starts: [num_words]
+            child_ends: [num_words]
         """
         ann_idx, word_idx = self.offsets[idx]
         words, pos_tags, dp_tags, dp_heads = self.data[ann_idx]
@@ -207,13 +209,19 @@ class S2SDataset(BaseDataset):
             warnings.warn("assertion error, be careful that this should not happen unless you're "
                          "doing topk prediction, thus predicted span_start may be less than predicted parent_start")
 
-        # todo add child tags
         child_flags = [0] * mrc_length
+        child_starts_flags = [0] * mrc_length
+        child_ends_flags = [0] * mrc_length
         for child_idx, parent_idx in enumerate(dp_heads):
             # +1 because word_idx start from 0, but in dependency annotation, true word start from 1
             if parent_idx == word_idx + 1:
                 child_flags[child_idx + query_length+1] = 1
+                child_start, child_end = subtree_spans[child_idx]
+                child_starts_flags[min(child_start + query_length + 1, len(child_starts_flags)-1)] = True
+                child_ends_flags[min(child_end + query_length + 1, len(child_ends_flags)-1)] = True
         fields["child_idxs"] = torch.BoolTensor(child_flags)
+        fields["child_starts"] = torch.BoolTensor(child_starts_flags)
+        fields["child_ends"] = torch.BoolTensor(child_ends_flags)
 
         child_mask = [False] * mrc_length
         # child should be inside parent span
@@ -255,14 +263,18 @@ def collate_s2s_data(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Te
             wordpiece_mask: [num_word_pieces]
             pos_tags: [num_words]
             word_mask: [num_words]
-            parent_mask: [num_words]
-            parent_start_mask: [num_words]
-            parent_end_mask: [num_words]
-            child_mask: [num_words]
+            parent_mask: [num_words]: True if this position can be parent word_idx, otherwise False
+            parent_start_mask: [num_words]: True if this position can be parent subtree start, otherwise False
+            parent_end_mask: [num_words]: True if this position can be parent subtree end, otherwise False
+            child_mask: [num_words]: True if this position can be child subtree root/start/end, otherwise False
             meta_data: dict of meta_fields
             parent_idxs: [1]
             parent_tags: [1]
-            child_idxs: [num_words]
+            parent_starts: [1]
+            parent_ends: [1]
+            child_idxs: [num_words]: True if this position is a subtree-child of query span, otherwise False
+            child_starts: [num_words]
+            child_ends: [num_words]
     Returns:
         output: dict of batched fields
     """
@@ -283,7 +295,7 @@ def collate_s2s_data(batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Te
             pad_output[sample_idx][: data.shape[0]] = data
         output[field] = pad_output
 
-    for field in ["pos_tags", "word_mask", "parent_start_mask",
+    for field in ["pos_tags", "child_starts", "child_ends", "word_mask", "parent_start_mask",
                   "parent_end_mask", "parent_mask", "child_idxs", "child_mask"]:
         pad_output = torch.full([batch_size, max_words], 0, dtype=batch[0][field].dtype)
         for sample_idx in range(batch_size):
@@ -329,5 +341,4 @@ if __name__ == '__main__':
                             batch_size=100,
                         ))
     for batch in tqdm(loader):
-        # print(batch)
-        pass
+        print(batch)

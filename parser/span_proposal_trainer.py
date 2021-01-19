@@ -9,21 +9,23 @@
 
 """
 
-import os
 import argparse
+import os
+from typing import Dict, Union
+
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
-from transformers import BertConfig, AdamW, RobertaConfig
+from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler
+from transformers import AdamW, AutoConfig
+
+from parser.callbacks import *
+from parser.data.samplers import GroupedSampler
 from parser.data.span_proposal_dataset import SubTreeProposalDataset, collate_subtree_data
 from parser.metrics import *
 from parser.models import *
-from parser.callbacks import *
 from parser.utils.get_parser import get_parser
-from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler
-from parser.data.samplers import GroupedSampler
-from typing import Dict, Union
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -41,8 +43,8 @@ class MrcSpanProposal(pl.LightningModule):
 
         # compute other fields according to args
         train_dataset = SubTreeProposalDataset(
-            file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
-            # file_path=os.path.join(args.data_dir, f"sample.{args.data_format}"),
+            file_path=os.path.join(args.data_dir, f"{args.data_prefix}train.{args.data_format}"),
+            # file_path=os.path.join(args.data_dir, f"{args.data_prefix}sample.{args.data_format}"),
             bert=args.bert_dir
         )
 
@@ -56,35 +58,24 @@ class MrcSpanProposal(pl.LightningModule):
         self.save_hyperparameters(args)
         self.args = args
 
-        bert_name = args.bert_name
-        if bert_name == 'roberta':
-            bert_config = RobertaConfig.from_pretrained(args.bert_dir)
-            ProposalConfig = RoBertaSpanProposalConfig
-        elif bert_name == 'bert':
-            bert_config = BertConfig.from_pretrained(args.bert_dir)
-            ProposalConfig = BertSpanProposalConfig
-        else:
-            raise ValueError("Unknown bert name!!")
+        bert_config = AutoConfig.from_pretrained(args.bert_dir)
 
-        self.model_config = ProposalConfig(
+        self.model_config = SpanProposalConfig(
+            bert_config=bert_config,
             pos_tags=args.pos_tags,
             dep_tags=args.dep_tags,
             pos_dim=args.pos_dim,
             additional_layer=args.additional_layer,
             additional_layer_dim=args.additional_layer_dim,
             additional_layer_type=args.additional_layer_type,
-            mrc_dropout=args.mrc_dropout,
-            **bert_config.__dict__
+            mrc_dropout=args.mrc_dropout
         )
-        self.model = SpanProposal.from_pretrained(args.bert_dir, config=self.model_config)
+        self.model = SpanProposal(bert_dir=args.bert_dir, config=self.model_config)
 
         if args.freeze_bert:
             for param in self.model.bert.parameters():
                 param.requires_grad = False
 
-        # self.train_stat = AttachmentScores()
-        # self.val_stat = AttachmentScores() if not self.args.use_mst else T2TAttachmentScores()
-        # self.test_stat = AttachmentScores() if not self.args.use_mst else T2TAttachmentScores()
         self.train_acc = AllTopkAccuracy(self.acc_topk)
         self.val_acc = AllTopkAccuracy(self.acc_topk)
         self.test_acc = AllTopkAccuracy(self.acc_topk)
@@ -126,10 +117,6 @@ class MrcSpanProposal(pl.LightningModule):
             pos_tags, word_mask, subtree_spans
         )
         bsz, seq_len, _ = span_start_scores.size()
-        # eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
-        # bsz = span_idx.size(0)
-        # # [bsz]
-        # batch_range_vector = get_range_vector(bsz, get_device_of(span_idx))
         metric = getattr(self, f"{phase}_acc")
         metric_mask = ~(subtree_spans[:, :, 0].view(-1) == -100)
         metric.update(
@@ -156,7 +143,6 @@ class MrcSpanProposal(pl.LightningModule):
     def log_on_epoch_end(self, phase="train"):
         metric_name = f"{phase}_acc"
         metric = getattr(self, metric_name)
-        # self.log(metric_name, metric)
         metrics = metric.compute()
         for sub_metric, metric_value in metrics.items():
             self.log(f"{phase}_{sub_metric}", metric_value)
@@ -235,7 +221,7 @@ class MrcSpanProposal(pl.LightningModule):
 
     def get_dataloader(self, split="train", shuffle=True):
         dataset = SubTreeProposalDataset(
-            file_path=os.path.join(self.args.data_dir, f"{split}.{self.args.data_format}"),
+            file_path=os.path.join(self.args.data_dir, f"{self.args.data_prefix}{split}.{self.args.data_format}"),
             pos_tags=self.args.pos_tags,
             dep_tags=self.args.dep_tags,
             bert=self.args.bert_dir
@@ -267,9 +253,11 @@ class MrcSpanProposal(pl.LightningModule):
 
     def train_dataloader(self) -> DataLoader:
         return self.get_dataloader("train", shuffle=True)
+        # return self.get_dataloader("sample", shuffle=False)
 
     def val_dataloader(self) -> DataLoader:
         return self.get_dataloader("dev", shuffle=False)
+        # return self.get_dataloader("sample", shuffle=False)
 
     def test_dataloader(self) -> DataLoader:
         return self.get_dataloader("test", shuffle=False)

@@ -135,6 +135,15 @@ class DecodeStruct:
         span2parent_end_scores: subtree-parent scores
             maps each span-candidate(word_idx, span_start, span_end) to its parent-end probs,
             which is a numpy array of shape [nwords+1], +1 for [root] score.
+        span2child_scores: subtree-child scores
+            maps each span-candidate(word_idx, span_start, span_end) to its child probs,
+            which is a numpy array of shape [nwords+1], +1 for [root] score.
+        span2child_start_scores: subtree-child scores
+            maps each span-candidate(word_idx, span_start, span_end) to its child start probs,
+            which is a numpy array of shape [nwords+1], +1 for [root] score.
+        span2child_end_scores: subtree-child scores
+            maps each span-candidate(word_idx, span_start, span_end) to its child end probs,
+            which is a numpy array of shape [nwords+1], +1 for [root] score.
         span2parent_tags_idxs: subtree-parent tags scores
             maps each span-candidate(word_idx, span_start, span_end) to its max parent tag scores.
             tags_idxs is a numpy array of shape [nwords+1], +1 for [root] score.
@@ -143,6 +152,7 @@ class DecodeStruct:
         todo:
             1.add tag decoding
             2.分数都用idx来存，去掉dict的结构
+            3. 统一变成logits传进来
     """
     def __init__(
         self,
@@ -151,6 +161,9 @@ class DecodeStruct:
         span2parent_arc_scores: Dict[Tuple[int, int, int], np.array] = None,
         span2parent_start_scores: Dict[Tuple[int, int, int], np.array] = None,
         span2parent_end_scores: Dict[Tuple[int, int, int], np.array] = None,
+        span2child_scores: Dict[Tuple[int, int, int], np.array] = None,
+        span2child_start_scores: Dict[Tuple[int, int, int], np.array] = None,
+        span2child_end_scores: Dict[Tuple[int, int, int], np.array] = None,
         span2parent_tags_idxs: Dict[Tuple[int, int, int], np.array] = None,
         dep_heads: List[int] = None,
         dep_tags: List[str] = None,
@@ -161,6 +174,9 @@ class DecodeStruct:
         self.span2parent_arc_scores = span2parent_arc_scores or dict()
         self.span2parent_start_scores = span2parent_start_scores or dict()
         self.span2parent_end_scores = span2parent_end_scores or dict()
+        self.span2child_scores = span2child_scores or dict()
+        self.span2child_start_scores = span2child_scores or dict()
+        self.span2child_end_scores = span2child_scores or dict()
         self.span2parent_tags_idxs = span2parent_tags_idxs or dict()
         self.dep_heads = dep_heads
         self.dep_tags = dep_tags
@@ -173,6 +189,7 @@ class DecodeStruct:
         # values to generate during decode
         self.span_lst = self.parent_arc_score_lst = self.span_root_score_lst = self.parent_tags_idxs_lst = None
         self.parent_start_score_lst = self.parent_end_score_lst = None
+        self.child_score_lst = self.child_start_score_lst = self.child_end_score_lst = None
 
     def __repr__(self):
         return json.dumps({
@@ -183,7 +200,7 @@ class DecodeStruct:
 
     def get_spans_infos(self):
         """
-        get span infos that used for deocoding
+        get span infos that used for decoding
         """
         self.span_lst = list(self.span2parent_arc_scores.keys())
         self.parent_arc_score_lst: List[np.array] = [self.span2parent_arc_scores[s] for s in self.span_lst]
@@ -191,6 +208,12 @@ class DecodeStruct:
             if self.span2parent_start_scores else [np.ones_like(x) for x in self.parent_arc_score_lst]
         self.parent_end_score_lst: List[np.array] = [self.span2parent_end_scores[s] for s in self.span_lst] \
             if self.span2parent_start_scores else [np.ones_like(x) for x in self.parent_arc_score_lst]
+        self.child_score_lst: List[np.array] = [self.span2child_scores[s] for s in self.span_lst] \
+            if self.span2child_scores else [np.ones_like(x) for x in self.parent_arc_score_lst]
+        self.child_start_score_lst: List[np.array] = [self.span2child_start_scores[s] for s in self.span_lst] \
+            if self.span2child_start_scores else [np.ones_like(x) for x in self.parent_arc_score_lst]
+        self.child_end_score_lst: List[np.array] = [self.span2child_end_scores[s] for s in self.span_lst] \
+            if self.span2child_end_scores else [np.ones_like(x) for x in self.parent_arc_score_lst]
         self.parent_tags_idxs_lst: List[np.array] = [self.span2parent_tags_idxs[s] for s in self.span_lst]
         self.span_root_score_lst: List[float] = [self.span2root_scores[s] for s in self.span_lst]
         # spans that offsets + 1 (for root)
@@ -199,19 +222,27 @@ class DecodeStruct:
         # add root
         self.words = ["[root]"] + self.words
 
-        # filter invalid spans: start > end or out of origin sentence length
+        # root scores
         valid_span_lst = [(0, 0, len(self.words)-1)]
         valid_span_root_scores = [0.0]
         valid_span_arc_lst = [np.ones_like(self.parent_arc_score_lst[0])]
         valid_span_start_lst = [np.ones_like(self.parent_start_score_lst[0])]
         valid_span_end_lst = [np.ones_like(self.parent_end_score_lst[0])]
         valid_span_tags_lst = [np.ones_like(self.parent_tags_idxs_lst[0])]
-        for span, root_score, arc_scores, start_scores, end_scores, tags in zip(
+        valid_span_child_lst = [np.ones_like(self.child_score_lst[0])]
+        valid_span_child_start_lst = [np.ones_like(self.child_start_score_lst[0])]
+        valid_span_child_end_lst = [np.ones_like(self.child_end_score_lst[0])]
+        # filter invalid spans: start > end or root not in span or out of origin sentence length
+        for (span, root_score, arc_scores, start_scores, end_scores,
+             child_scores, child_start_scores, child_end_scores, tags) in zip(
             self.span_lst,
             self.span_root_score_lst,
             self.parent_arc_score_lst,
             self.parent_start_score_lst,
             self.parent_end_score_lst,
+            self.child_score_lst,
+            self.child_start_score_lst,
+            self.child_end_score_lst,
             self.parent_tags_idxs_lst
         ):
             word_idx, start, end = span
@@ -219,11 +250,17 @@ class DecodeStruct:
                 continue
             if end >= len(self.words):
                 continue
+            if end < word_idx or start > word_idx:
+                continue
+
             valid_span_lst.append(span)
             valid_span_root_scores.append(root_score)
             valid_span_arc_lst.append(arc_scores)
             valid_span_start_lst.append(start_scores)
             valid_span_end_lst.append(end_scores)
+            valid_span_child_lst.append(child_scores)
+            valid_span_child_start_lst.append(child_start_scores)
+            valid_span_child_end_lst.append(child_end_scores)
             valid_span_tags_lst.append(tags)
 
         self.span_lst = valid_span_lst
@@ -231,6 +268,9 @@ class DecodeStruct:
         self.parent_arc_score_lst = valid_span_arc_lst
         self.parent_start_score_lst = valid_span_start_lst
         self.parent_end_score_lst = valid_span_end_lst
+        self.child_score_lst = valid_span_child_lst
+        self.child_start_score_lst = valid_span_child_start_lst
+        self.child_end_score_lst = valid_span_child_end_lst
         self.parent_tags_idxs_lst = valid_span_tags_lst
 
     @property
@@ -290,6 +330,7 @@ class DecodeStruct:
             finished[span_idx] = True
         # bottom-up dynamic-programming
         while not finished[0]:
+            # print([subtree for subtree, finish in zip(all_trees, finished) if not finish])
             for span_idx, ((word_idx, start, end), finish) in enumerate(zip(all_trees, finished)):
                 if finish:
                     continue
@@ -306,11 +347,15 @@ class DecodeStruct:
                     children_spans = [all_spans[i] for i in left_children_ids]
                     children_scores = []
                     for subtree_idx in left_children_ids:
+                        subtree_root, subtree_start, subtree_end = all_trees[subtree_idx]
                         children_scores.append(max_dep[subtree_idx].score +
                                                arc_alpha * (
                                                    math.log(self.parent_arc_score_lst[subtree_idx][word_idx]+EPS)
                                                    + math.log(self.parent_start_score_lst[subtree_idx][start]+EPS)
                                                    + math.log(self.parent_end_score_lst[subtree_idx][end]+EPS)
+                                                   + math.log(self.child_score_lst[subtree_idx][subtree_root]+EPS)
+                                                   + math.log(self.child_start_score_lst[subtree_idx][subtree_start]+EPS)
+                                                   + math.log(self.child_score_lst[subtree_idx][subtree_end]+EPS)
                                                 ))
                     best_splits, best_score = find_max_splits(start=start, end=word_idx-1,
                                                               spans=children_spans,
@@ -330,11 +375,15 @@ class DecodeStruct:
                     children_spans = [all_spans[i] for i in right_children_ids]
                     children_scores = []
                     for subtree_idx in right_children_ids:
+                        subtree_root, subtree_start, subtree_end = all_trees[subtree_idx]
                         children_scores.append(max_dep[subtree_idx].score +
                                                arc_alpha * (
                                                    math.log(self.parent_arc_score_lst[subtree_idx][word_idx]+EPS)
                                                    + math.log(self.parent_start_score_lst[subtree_idx][start]+EPS)
                                                    + math.log(self.parent_end_score_lst[subtree_idx][end]+EPS)
+                                                   + math.log(self.child_score_lst[subtree_idx][subtree_root]+EPS)
+                                                   + math.log(self.child_start_score_lst[subtree_idx][subtree_start]+EPS)
+                                                   + math.log(self.child_score_lst[subtree_idx][subtree_end] + EPS)
                                                ))
                     best_splits, best_score = find_max_splits(start=word_idx+1, end=end,
                                                               spans=children_spans,

@@ -16,8 +16,7 @@ import torch
 from allennlp.nn.util import get_range_vector, get_device_of
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from torch.utils.data import DataLoader
-from transformers import BertConfig, AdamW
-from transformers.configuration_roberta import RobertaConfig
+from transformers import AdamW, AutoConfig
 from parser.data.s2s_dataset import S2SDataset, collate_s2s_data
 from parser.metrics import *
 from parser.models import *
@@ -41,8 +40,8 @@ class MrcS2SQuery(pl.LightningModule):
 
         # compute other fields according to args
         train_dataset = S2SDataset(
-            file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
-            # file_path=os.path.join(args.data_dir, f"sample.{args.data_format}"),
+            file_path=os.path.join(args.data_dir, f"{args.data_prefix}train.{args.data_format}"),
+            # file_path=os.path.join(args.data_dir, f"{args.data_prefix}sample.{args.data_format}"),
             bert=args.bert_dir,
             bert_name=args.bert_name
         )
@@ -57,19 +56,9 @@ class MrcS2SQuery(pl.LightningModule):
         self.save_hyperparameters(args)
         self.args = args
 
-        bert_name = args.bert_name
-        if bert_name == 'roberta':
-            bert_config = RobertaConfig.from_pretrained(args.bert_dir, hidden_dropout_prob=args.bert_dropout)
-            MrcS2SDependencyConfig = RobertaMrcS2SQueryDependencyConfig
-        elif bert_name == 'bert':
-            bert_config = BertConfig.from_pretrained(args.bert_dir, hidden_dropout_prob=args.bert_dropout)
-            MrcS2SDependencyConfig = BertMrcS2SQueryDependencyConfig
-        else:
-            raise ValueError("Unknown bert name!!")
-
-        # bert_config = BertConfig.from_pretrained(args.bert_dir, hidden_dropout_prob=args.bert_dropout)
-
-        self.model_config = MrcS2SDependencyConfig(
+        bert_config = AutoConfig.from_pretrained(args.bert_dir, hidden_dropout_prob=args.bert_dropout)
+        self.model_config = S2SConfig(
+            bert_config=bert_config,
             pos_tags=args.pos_tags,
             dep_tags=args.dep_tags,
             pos_dim=args.pos_dim,
@@ -78,9 +67,8 @@ class MrcS2SQuery(pl.LightningModule):
             additional_layer_type=args.additional_layer_type,
             mrc_dropout=args.mrc_dropout,
             predict_child=args.predict_child,
-            **bert_config.__dict__
         )
-        self.model = BiaffineDependencyS2SQeuryParser.from_pretrained(args.bert_dir, config=self.model_config)
+        self.model = BiaffineDependencyS2SQueryParser(config=self.model_config, bert_dir=args.bert_dir)
 
         if args.freeze_bert:
             for param in self.model.bert.parameters():
@@ -93,8 +81,9 @@ class MrcS2SQuery(pl.LightningModule):
 
         self.acc_metrics = {}
         for phase in ["train", "val", "test"]:
-            for bound in ["start", "end", "child"]:
-                self.acc_metrics[f"{phase}_{bound}_acc"] = Accuracy()
+            for relation in ["parent", "child"]:
+                for position in ["start", "end", "root"]:
+                    self.acc_metrics[f"{phase}_{relation}_{position}_acc"] = Accuracy()
         self.acc_metrics = torch.nn.ModuleDict(self.acc_metrics)
 
     @staticmethod
@@ -119,39 +108,45 @@ class MrcS2SQuery(pl.LightningModule):
 
     def forward(self, token_ids, type_ids, offsets, wordpiece_mask, pos_tags,
                 word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask=None,
-                parent_idxs=None, parent_tags=None, parent_starts=None, parent_ends=None, child_idxs=None):
+                parent_idxs=None, parent_tags=None, parent_starts=None, parent_ends=None,
+                child_idxs=None, child_starts=None, child_ends=None):
         return self.model(
-            token_ids, type_ids, offsets, wordpiece_mask,
-            pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask,
-            parent_idxs, parent_tags, parent_starts, parent_ends, child_idxs
+            token_ids, type_ids, offsets, wordpiece_mask, pos_tags,
+            word_mask, parent_mask, parent_start_mask, parent_end_mask,
+            child_mask, parent_idxs, parent_tags, parent_starts, parent_ends,
+            child_idxs, child_starts, child_ends
         )
 
     def common_step(self, batch, phase="train"):
         (token_ids, type_ids, offsets, wordpiece_mask, pos_tags,
          word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask,
-         meta_data, parent_idxs, parent_tags, parent_starts, parent_ends, child_idxs) = (
+         meta_data, parent_idxs, parent_tags, parent_starts, parent_ends, child_idxs, child_starts, child_ends) = (
             batch["token_ids"], batch["type_ids"], batch["offsets"], batch["wordpiece_mask"],
             batch["pos_tags"], batch["word_mask"], batch["parent_mask"], batch["parent_start_mask"],
             batch["parent_end_mask"], batch["child_mask"], batch["meta_data"],
             batch["parent_idxs"], batch["parent_tags"],
-            batch["parent_starts"], batch["parent_ends"], batch["child_idxs"]
+            batch["parent_starts"], batch["parent_ends"],
+            batch["child_idxs"], batch["child_starts"], batch["child_ends"],
         )
         if not self.model_config.predict_child:
             (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs,
              parent_arc_nll, parent_tag_nll, parent_start_nll, parent_end_nll) = self(
-                token_ids, type_ids, offsets, wordpiece_mask,
-                pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask,
-                parent_idxs, parent_tags, parent_starts, parent_ends, child_idxs
+                token_ids, type_ids, offsets, wordpiece_mask, pos_tags,
+                word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask,
+                parent_idxs, parent_tags, parent_starts, parent_ends
             )
             loss = parent_arc_nll + parent_tag_nll + parent_start_nll + parent_end_nll
         else:
-            (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs, child_probs,
-             parent_arc_nll, parent_tag_nll, parent_start_nll, parent_end_nll, child_loss) = self(
-                token_ids, type_ids, offsets, wordpiece_mask,
-                pos_tags, word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask,
-                parent_idxs, parent_tags, parent_starts, parent_ends, child_idxs
+            (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs,
+             child_probs, child_start_probs, child_end_probs,
+             parent_arc_nll, parent_tag_nll, parent_start_nll, parent_end_nll,
+             child_loss, child_start_loss, child_end_loss) = self(
+                token_ids, type_ids, offsets, wordpiece_mask, pos_tags,
+                word_mask, parent_mask, parent_start_mask, parent_end_mask, child_mask,
+                parent_idxs, parent_tags, parent_starts, parent_ends,
+                child_idxs, child_starts, child_ends
             )
-            loss = parent_arc_nll + parent_tag_nll + parent_start_nll + parent_end_nll + child_loss
+            loss = parent_arc_nll + parent_tag_nll + parent_start_nll + parent_end_nll + child_loss + child_start_loss + child_end_loss
         eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
         bsz = parent_probs.size(0)
         # [bsz]
@@ -169,24 +164,24 @@ class MrcS2SQuery(pl.LightningModule):
             eval_mask.unsqueeze(-1)  # [bsz, 1]
         )
 
-        start_acc_metric = self.acc_metrics[f"{phase}_start_acc"]
-        start_acc_metric.update(
-            preds=parent_start_probs.argmax(-1),
-            target=parent_starts
-        )
-
-        end_acc_metric = self.acc_metrics[f"{phase}_end_acc"]
-        end_acc_metric.update(
-            preds=parent_end_probs.argmax(-1),
-            target=parent_ends
-        )
+        relation = "parent"
+        for position, pred, golden in zip(
+            ["start", "end", "root"],
+            [parent_start_probs.argmax(-1), parent_end_probs.argmax(-1), pred_positions],
+            [parent_starts, parent_ends, parent_idxs]
+        ):
+            metric = self.acc_metrics[f"{phase}_{relation}_{position}_acc"]
+            metric.update(pred, golden)
 
         if self.model_config.predict_child:
-            child_acc_metric = self.acc_metrics[f"{phase}_child_acc"]
-            child_acc_metric.update(
-                preds=child_probs[child_mask],
-                target=child_idxs.long()[child_mask]
-            )
+            relation = "child"
+            for position, pred, golden in zip(
+                ["start", "end", "root"],
+                [child_start_probs[child_mask], child_end_probs[child_mask], child_probs[child_mask]],
+                [child_starts.long()[child_mask], child_ends.long()[child_mask], child_idxs.long()[child_mask]]
+            ):
+                metric = self.acc_metrics[f"{phase}_{relation}_{position}_acc"]
+                metric.update(pred, golden)
 
         self.log(f'{phase}_loss', loss)
         return loss
@@ -205,10 +200,11 @@ class MrcS2SQuery(pl.LightningModule):
         attach_metrics = attach_metric.compute()
         for sub_metric, metric_value in attach_metrics.items():
             self.log(f"{phase}_{sub_metric}", metric_value)
-        for bound in ["start", "end", "child"]:
-            metric_name = f"{phase}_{bound}_acc"
-            metric = self.acc_metrics[metric_name].compute()
-            self.log(metric_name, metric)
+        for relation in ["parent", "child"]:
+            for position in ["start", "end", "root"]:
+                metric_name = f"{phase}_{relation}_{position}_acc"
+                metric = self.acc_metrics[metric_name].compute()
+                self.log(metric_name, metric)
 
     def training_epoch_end(self, outputs):
         self.log_on_epoch_end("train")
@@ -284,7 +280,7 @@ class MrcS2SQuery(pl.LightningModule):
 
     def get_dataloader(self, split="train", shuffle=True):
         dataset = S2SDataset(
-            file_path=os.path.join(self.args.data_dir, f"{split}.{self.args.data_format}"),
+            file_path=os.path.join(self.args.data_dir, f"{self.args.data_prefix}{split}.{self.args.data_format}"),
             pos_tags=self.args.pos_tags,
             dep_tags=self.args.dep_tags,
             bert=self.args.bert_dir,
