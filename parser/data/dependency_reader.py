@@ -42,10 +42,12 @@ class DependencyDataset(BaseDataset):
         use_language_specific_pos: bool = False,
         pos_tags: List[str] = None,
         dep_tags: List[str] = None,
+        max_length: int = 512
     ) -> None:
         super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
         logger.info(f"pos tags: {self.pos_tag_2idx}")
         logger.info(f"dep tags: {self.dep_tag_2idx}")
+        self.max_length = max_length
 
     def __getitem__(self, idx):
         """
@@ -68,6 +70,11 @@ class DependencyDataset(BaseDataset):
         }
 
         bert_mismatch_fields = self.get_mismatch_token_idx(words)
+        
+        if len(bert_mismatch_fields["token_ids"]) > self.max_length:
+            warnings.warn(f"sample id {idx} exceeds max-length {self.max_length}")
+            return self[randint(0, len(self)-1)]
+
         fields.update(bert_mismatch_fields)
 
         pos_tag_idxs = [self.pos_tag_2idx[p] for p in pos_tags]

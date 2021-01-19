@@ -19,6 +19,7 @@ import torch
 
 from parser.data.base_bert_dataset import BaseDataset
 from parser.utils.logger import get_logger
+from random import randint
 
 logger = get_logger(__name__)
 
@@ -38,8 +39,7 @@ class DependencyT2TDataset(BaseDataset):
     """
 
     # we use [unused0] and [unused1] in bert vocab to represent bracket around query token
-    SPAN_START = 1
-    SPAN_END = 2
+    
 
     SEP_POS = "sep_pos"
 
@@ -52,15 +52,12 @@ class DependencyT2TDataset(BaseDataset):
         use_language_specific_pos: bool = False,
         pos_tags: List[str] = None,
         dep_tags: List[str] = None,
+        bert_name: str = None,
+        max_length: int = 512
     ) -> None:
         super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
 
-        if 'roberta' in bert:
-            self.bert_name = 'roberta'
-            self.SEP = "</s>"
-        else:
-            self.bert_name = 'bert'
-            self.SEP = "[SEP]"
+        self.max_length = max_length
 
         self.offsets = self.build_offsets()
         logger.info(f"build {len(self.offsets)} mrc-samples from {file_path}")
@@ -69,6 +66,19 @@ class DependencyT2TDataset(BaseDataset):
         self.pos_tag_2idx = {l: idx for idx, l in enumerate(self.pos_tags)}
         logger.info(f"pos tags: {self.pos_tag_2idx}")
         logger.info(f"dep tags: {self.dep_tag_2idx}")
+        
+        assert bert_name in ["roberta", "bert"]
+        self.bert_name = bert_name
+
+        if self.bert_name == "roberta":
+            self.SEP = "</s>"
+            self.SPAN_START = 1
+            self.SPAN_END = 2
+        else:
+            self.SEP = "[SEP]"
+            # we use [unused0] ~ [unused3] in bert vocab to represent bracket around query token and query span
+            self.SPAN_START = 1
+            self.SPAN_END = 4
 
     def build_offsets(self):
         """offsets[i] = (sent_idx, word_idx) of ith mrc-samples """
@@ -118,7 +128,11 @@ class DependencyT2TDataset(BaseDataset):
         self.replace_special_token(bert_mismatch_fields, [word_idx], self.SPAN_START)
         self.replace_special_token(bert_mismatch_fields, [word_idx+2], self.SPAN_END)
         fields.update(bert_mismatch_fields)
-
+        
+        if len(bert_mismatch_fields["token_ids"]) > self.max_length:
+            warnings.warn(f"sample id {idx} exceeds max-length {self.max_length}")
+            return self[randint(0, len(self)-1)]
+        
         query_pos_tags = pos_tags.copy() + [self.SEP_POS]
         query_pos_tags.insert(word_idx, self.SEP_POS)
         query_pos_tags.insert(word_idx + 2, self.SEP_POS)

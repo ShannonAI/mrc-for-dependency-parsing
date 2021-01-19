@@ -14,9 +14,9 @@ import os
 import argparse
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, early_stopping
 from torch.utils.data import DataLoader
-from transformers import BertConfig, AdamW
+from transformers import BertConfig, AdamW, RobertaConfig
 from parser.data.dependency_reader import DependencyDataset, collate_dependency_data
 from parser.metrics import *
 from parser.models import *
@@ -24,7 +24,7 @@ from parser.callbacks import *
 from parser.utils.get_parser import get_parser
 from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler
 from parser.data.samplers import GroupedSampler
-
+from parser.models.biaffine_dependency_config import RobertaDependencyConfig
 
 class BiafDependency(pl.LightningModule):
     def __init__(self, args):
@@ -34,7 +34,7 @@ class BiafDependency(pl.LightningModule):
             # eval mode
             assert isinstance(args, dict)
             args = argparse.Namespace(**args)
-
+            
         # compute other fields according to args
         train_dataset = DependencyDataset(
             file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
@@ -49,9 +49,18 @@ class BiafDependency(pl.LightningModule):
 
         self.save_hyperparameters(args)
         self.args = args
+        
+        bert_name = args.bert_name
+        if bert_name == 'roberta-large':
+            bert_config = RobertaConfig.from_pretrained(args.bert_dir)
+            DependencyConfig = RobertaDependencyConfig
+        elif bert_name == 'bert':
+            bert_config = BertConfig.from_pretrained(args.bert_dir)
+            DependencyConfig = BertDependencyConfig
+        else:
+            raise ValueError("Unknown bert name!!")
 
-        bert_config = BertConfig.from_pretrained(args.bert_dir)
-        self.model_config = BertDependencyConfig(
+        self.model_config = DependencyConfig(
             pos_tags=args.pos_tags,
             dep_tags=args.dep_tags,
             pos_dim=args.pos_dim,
@@ -63,7 +72,8 @@ class BiafDependency(pl.LightningModule):
             biaf_dropout=args.biaf_dropout,
             **bert_config.__dict__
         )
-        self.model = BiaffineDependencyParser.from_pretrained(args.bert_dir, config=self.model_config)
+
+        self.model = BiaffineDependencyParser(args.bert_dir, config=self.model_config)
 
         if args.freeze_bert:
             for param in self.model.bert.parameters():
@@ -284,9 +294,17 @@ def main():
         verbose=True
     )
 
+    early_stop_callback = early_stopping.EarlyStopping(
+        monitor='val_UAS',
+        min_delta=0.00,
+        patience=10,
+        verbose=True,
+        mode='max'
+    )
+
     lr_monitor = LearningRateMonitor(logging_interval='step')
     print_model = ModelPrintCallback(print_modules=["model"])
-    callbacks = [checkpoint_callback, lr_monitor, print_model]
+    callbacks = [checkpoint_callback, lr_monitor, print_model, early_stop_callback]
     if args.freeze_bert:
         callbacks.append(EvalCallback(["model.bert"]))
 
@@ -297,6 +315,7 @@ def main():
     )
     trainer.fit(model)
 
+    trainer.test()
 
 if __name__ == '__main__':
     main()

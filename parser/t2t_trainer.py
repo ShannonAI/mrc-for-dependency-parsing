@@ -42,7 +42,8 @@ class MrcDependency(pl.LightningModule):
         # compute other fields according to args
         train_dataset = DependencyT2TDataset(
             file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
-            bert=args.bert_dir
+            bert=args.bert_dir, 
+            bert_name=args.bert_name
         )
 
         # save these information to args to convene evaluation.
@@ -75,7 +76,7 @@ class MrcDependency(pl.LightningModule):
             mrc_dropout=args.mrc_dropout,
             **bert_config.__dict__
         )
-        self.model = BiaffineDependencyT2TParser.from_pretrained(args.bert_dir, config=self.model_config)
+        self.model = BiaffineDependencyT2TParser(args.bert_dir, config=self.model_config)
 
         if args.freeze_bert:
             for param in self.model.bert.parameters():
@@ -252,7 +253,8 @@ class MrcDependency(pl.LightningModule):
             file_path=os.path.join(self.args.data_dir, f"{split}.{self.args.data_format}"),
             pos_tags=self.args.pos_tags,
             dep_tags=self.args.dep_tags,
-            bert=self.args.bert_dir
+            bert=self.args.bert_dir, 
+            bert_name=self.args.bert_name
         )
         if self.args.num_gpus <= 1:
             sampler = RandomSampler(dataset) if shuffle else SequentialSampler(dataset)
@@ -305,6 +307,7 @@ def main():
     model = MrcDependency(args)
 
     # load pretrained_model
+
     if args.pretrained:
         model.load_state_dict(
             torch.load(args.pretrained, map_location=torch.device('cpu'))["state_dict"]
@@ -334,6 +337,7 @@ def main():
 
     trainer.fit(model)
 
+    trainer.test()
 
 if __name__ == '__main__':
     main()
