@@ -33,6 +33,10 @@ Codes for dependency parsing, including following models:
 * python>=3.6
 * `pip install -r requirements.txt`
 
+## Dataset
+We followed [this repo](https://github.com/hankcs/TreebankPreprocessing) for PTB/CTB data preprocessing.
+
+
 ## Reproduction
 ### 1. Deep Biaffine Attention
 #### Train

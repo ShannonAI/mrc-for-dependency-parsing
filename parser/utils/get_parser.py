@@ -12,6 +12,8 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bert_name", type=str, default="bert",
                         choices=["bert", "roberta"])
     parser.add_argument("--data_dir", type=str, required=True, help="data dir")
+    parser.add_argument("--data_prefix", type=str, default="",
+                        help="data prefix. For example, in UD treebank, we can use bg_btb-ud- as prefix for bg dataset")
     parser.add_argument("--data_format", type=str, choices=["conllu", "conllx"],
                         default="conllu", help="data format")
     parser.add_argument("--bert_dir", type=str, required=True, help="bert dir")

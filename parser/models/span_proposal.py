@@ -1,6 +1,6 @@
 import logging
 from copy import deepcopy
-from typing import Optional, Tuple, Union
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
@@ -12,31 +12,37 @@ from allennlp.nn import Activation
 from allennlp.nn import util as allennlp_util
 from overrides import overrides
 from torch import nn
-from transformers import BertModel, BertPreTrainedModel, RobertaModel
+from transformers import BertPreTrainedModel, AutoModel
 from transformers.modeling_bert import BertEncoder
 
-
-from parser.models.span_proposal_config import BertSpanProposalConfig, RoBertaSpanProposalConfig
+from parser.models.span_proposal_config import SpanProposalConfig
 
 logger = logging.getLogger(__name__)
 
 
-class SpanProposal(BertPreTrainedModel):
+class SpanProposal(torch.nn.Module):
     """
     This dependency parser follows the model of
     [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)]
     (https://arxiv.org/abs/1611.01734) .
     But We use span-to-token MRC to extract parent and labels
+
+    Args:
+        config: SpanProposal Config that defines model dim and structure
+        bert_dir: pretrained bert directory
+
     """
 
-    def __init__(self, config: Union[BertSpanProposalConfig, RoBertaSpanProposalConfig]):
-        super().__init__(config)
+    def __init__(self, config: SpanProposalConfig, bert_dir: str = ""):
+        super().__init__()
 
         self.config = config
 
         num_dep_labels = len(config.dep_tags)
         num_pos_labels = len(config.pos_tags)
-        hidden_size = config.additional_layer_dim if config.additional_layer > 0 else config.pos_dim + config.hidden_size
+        hidden_size = config.additional_layer_dim if config.additional_layer > 0 else config.pos_dim + config.bert_config.hidden_size
+
+        self.bert = AutoModel.from_pretrained(pretrained_model_name_or_path=bert_dir, config=config.bert_config)
 
         if config.pos_dim > 0:
             self.pos_embedding = nn.Embedding(num_pos_labels, config.pos_dim)
@@ -44,9 +50,9 @@ class SpanProposal(BertPreTrainedModel):
             if (
                 config.additional_layer
                 and config.additional_layer_type != "lstm"
-                and config.pos_dim+config.hidden_size != hidden_size
+                and config.pos_dim+config.bert_config.hidden_size != hidden_size
             ):
-                self.fuse_layer = nn.Linear(config.pos_dim+config.hidden_size, hidden_size)
+                self.fuse_layer = nn.Linear(config.pos_dim+config.bert_config.hidden_size, hidden_size)
                 nn.init.xavier_uniform_(self.fuse_layer.weight)
                 self.fuse_layer.bias.data.zero_()
             else:
@@ -54,16 +60,9 @@ class SpanProposal(BertPreTrainedModel):
         else:
             self.pos_embedding = None
 
-        if isinstance(config, BertSpanProposalConfig):
-            self.bert = BertModel(config)
-            self.arch = "bert"
-        else:
-            self.roberta = RobertaModel(config)
-            self.arch = "roberta"
-
         if config.additional_layer > 0:
             if config.additional_layer_type == "transformer":
-                new_config = deepcopy(config)
+                new_config = deepcopy(config.bert_config)
                 new_config.hidden_size = hidden_size
                 new_config.num_hidden_layers = config.additional_layer
                 new_config.hidden_dropout_prob = new_config.attention_probs_dropout_prob = config.mrc_dropout
@@ -73,7 +72,7 @@ class SpanProposal(BertPreTrainedModel):
             else:
                 assert hidden_size % 2 == 0, "Bi-LSTM need an even hidden_size"
                 self.additional_encoder = StackedBidirectionalLstmSeq2SeqEncoder(
-                    input_size=config.pos_dim+config.hidden_size,
+                    input_size=config.pos_dim+config.bert_config.hidden_size,
                     hidden_size=hidden_size//2, num_layers=config.additional_layer,
                     recurrent_dropout_probability=config.mrc_dropout, use_highway=True
                 )
@@ -106,7 +105,7 @@ class SpanProposal(BertPreTrainedModel):
         if isinstance(module, (nn.Linear, nn.Embedding)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            module.weight.data.normal_(mean=0.0, std=self.config.bert_config.initializer_range)
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
@@ -211,8 +210,7 @@ class SpanProposal(BertPreTrainedModel):
         get word-level embedding
         """
         # Shape: [batch_size, num_wordpieces, embedding_size].
-        embed_model = self.bert if self.arch == "bert" else self.roberta
-        embeddings = embed_model(token_ids, token_type_ids=type_ids, attention_mask=wordpiece_mask)[0]
+        embeddings = self.bert(token_ids, token_type_ids=type_ids, attention_mask=wordpiece_mask)[0]
 
         # span_embeddings: (batch_size, num_orig_tokens, max_span_length, embedding_size)
         # span_mask: (batch_size, num_orig_tokens, max_span_length)
@@ -232,19 +230,19 @@ class SpanProposal(BertPreTrainedModel):
 
 
 if __name__ == '__main__':
-    from transformers import BertConfig
+    from transformers import AutoConfig
     bert_path = "/data/nfsdata2/nlp_application/models/bert/bert-large-cased"
-    bert_config = BertConfig.from_pretrained(bert_path)
-    bert_dep_config = BertSpanProposalConfig(
+    bert_config = AutoConfig.from_pretrained(bert_path)
+    bert_dep_config = SpanProposalConfig(
         pos_tags=[f"pos_{i}" for i in range(5)],
         dep_tags=[f"dep_{i}" for i in range(5)],
         pos_dim=100,
         mrc_dropout=0.3,
-        **bert_config.__dict__
+        bert_config=bert_config
     )
-    mrc_dep = SpanProposal.from_pretrained(
-        bert_path,
+    mrc_dep = SpanProposal(
         config=bert_dep_config,
+        bert_dir=bert_path
     )
     bsz = 2
     num_word_pieces = 128
