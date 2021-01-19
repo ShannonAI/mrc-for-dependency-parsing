@@ -24,6 +24,28 @@ from parser.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+BERT_TOKEN_MAPPING = {
+    "-LRB-": "(",
+    "-RRB-": ")",
+    "-LCB-": "{",
+    "-RCB-": "}",
+    "-LSB-": "[",
+    "-RSB-": "]",
+    "``": '"',
+    "''": '"',
+    "`": "'",
+    '«': '"',
+    '»': '"',
+    '‘': "'",
+    '’': "'",
+    '“': '"',
+    '”': '"',
+    '„': '"',
+    '‹': "'",
+    '›': "'",
+    "\u2013": "--", # en dash
+    "\u2014": "--", # em dash
+    }
 
 class BaseDataset(Dataset):
     """
@@ -65,11 +87,20 @@ class BaseDataset(Dataset):
                 dp_heads = [x["head"] for x in annotation]
                 dp_tags = [x["deprel"] for x in annotation]
                 words = [x["form"] for x in annotation]
+                # convert unkowning words for pre-trianed models
+                cleaned_words = []
+                for word in words:
+                    word = BERT_TOKEN_MAPPING.get(word, word)
+                    if word == "n't" and cleaned_words:
+                            cleaned_words[-1] = cleaned_words[-1] + "n"
+                            word = "'t"
+                    cleaned_words.append(word)
+
                 if self.use_language_specific_pos:
                     sample_pos_tags = [x["xpostag"] for x in annotation]
                 else:
                     sample_pos_tags = [x["upostag"] for x in annotation]
-                self.data.append([words, sample_pos_tags, dp_tags, dp_heads])
+                self.data.append([cleaned_words, sample_pos_tags, dp_tags, dp_heads])
 
             logger.info(f"Read {len(self.data)} sentences from conll dataset at: %s", file_path)
 
