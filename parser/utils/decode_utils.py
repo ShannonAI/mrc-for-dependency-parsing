@@ -175,8 +175,8 @@ class DecodeStruct:
         self.span2parent_start_scores = span2parent_start_scores or dict()
         self.span2parent_end_scores = span2parent_end_scores or dict()
         self.span2child_scores = span2child_scores or dict()
-        self.span2child_start_scores = span2child_scores or dict()
-        self.span2child_end_scores = span2child_scores or dict()
+        self.span2child_start_scores = span2child_start_scores or dict()
+        self.span2child_end_scores = span2child_end_scores or dict()
         self.span2parent_tags_idxs = span2parent_tags_idxs or dict()
         self.dep_heads = dep_heads
         self.dep_tags = dep_tags
@@ -287,7 +287,25 @@ class DecodeStruct:
             ))
         return output
 
-    def decode(self, arc_alpha=1.0) -> SubTreeStruct:
+    def greedy_decode(self) -> Tuple[List[int], List[int]]:
+        """do greedy decode: for each token, choose the top1 substree span and its parent for final prediction"""
+        if self.span_lst is None:
+            self.get_spans_infos()
+
+        dep_heads = [0] * (len(self.words) - 1)
+        dep_tags = [0] * (len(self.words) - 1)
+
+        for word_idx in range(len(dep_heads)):
+            best_start, best_end, score = self.span_candidates[word_idx][0]
+            subtree = (word_idx, best_start, best_end)
+            best_parent = self.span2parent_arc_scores[subtree].argmax().item()
+            best_parent_tag = self.span2parent_tags_idxs[subtree][best_parent].item()
+            dep_heads[word_idx] = best_parent
+            dep_tags[word_idx] = best_parent_tag
+
+        return dep_heads, dep_tags
+
+    def dp_decode(self, arc_alpha=1.0) -> SubTreeStruct:
         """
         decode highest score tree from self using bottom-up dynamic-programming
         todo write dp function here
