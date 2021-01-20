@@ -62,7 +62,7 @@ class BiaffineDependencyParser(nn.Module):
 
         if config.additional_layer > 0:
             if config.additional_layer_type == "transformer":
-                new_config = deepcopy(config)
+                new_config = deepcopy(config.bert_config)
                 new_config.hidden_size = hidden_size
                 new_config.num_hidden_layers = config.additional_layer
                 new_config.hidden_dropout_prob = config.biaf_dropout
