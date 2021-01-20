@@ -13,7 +13,7 @@ for LR in 6e-5 8e-5 4e-5 2e-5 1e-6 3e-6 5e-6; do
     addition=1
 
     # save directory
-    OUTPUT_DIR="/userhome/yuxian/train_logs/dependency/ud-bg/s2s/lr${LR}_accumulate${accumulate}_warmup${WARMUP}_add${addition}"
+    OUTPUT_DIR="/userhome/yuxian/train_logs/dependency/ud-no/biaf/lr${LR}_accumulate${accumulate}_warmup${WARMUP}_add${addition}"
     mkdir -p $OUTPUT_DIR
 
     python parser/biaf_trainer.py \
