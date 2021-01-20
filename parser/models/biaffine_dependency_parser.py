@@ -49,8 +49,8 @@ class BiaffineDependencyParser(nn.Module):
         if config.pos_dim > 0:
             self.pos_embedding = nn.Embedding(num_pos_labels, config.pos_dim)
             nn.init.xavier_uniform_(self.pos_embedding.weight)
-            if config.additional_layer_type != "lstm" and config.pos_dim+config.hidden_size != hidden_size:
-                self.fuse_layer = nn.Linear(config.pos_dim+config.hidden_size, hidden_size)
+            if config.additional_layer_type != "lstm" and config.pos_dim+config.bert_config.hidden_size != hidden_size:
+                self.fuse_layer = nn.Linear(config.pos_dim+config.bert_config.hidden_size, hidden_size)
                 nn.init.xavier_uniform_(self.fuse_layer.weight)
                 self.fuse_layer.bias.data.zero_()
             else:
@@ -73,7 +73,7 @@ class BiaffineDependencyParser(nn.Module):
             else:
                 assert hidden_size % 2 == 0, "Bi-LSTM need an even hidden_size"
                 self.additional_encoder = StackedBidirectionalLstmSeq2SeqEncoder(
-                    input_size=config.pos_dim+config.hidden_size,
+                    input_size=config.pos_dim+config.bert_config.hidden_size,
                     hidden_size=hidden_size//2, num_layers=config.additional_layer,
                     recurrent_dropout_probability=config.biaf_dropout, use_highway=True
                 )
