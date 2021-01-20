@@ -33,7 +33,7 @@ python parser/biaf_trainer.py \
 --accumulate_grad_batches $accumulate \
 --lr $LR \
 --gradient_clip_val=1.0 \
---ignore_punct --predict_child \
+--ignore_punct \
 --max_epochs 100 \
 --group_sample \
 --scheduler "linear_decay" --warmup_steps $WARMUP --final_div_factor 20
