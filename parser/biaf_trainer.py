@@ -38,7 +38,7 @@ class BiafDependency(pl.LightningModule):
             
         # compute other fields according to args
         train_dataset = DependencyDataset(
-            file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
+            file_path=os.path.join(args.data_dir, f"{args.data_prefix}train.{args.data_format}"),
             bert=args.bert_dir
         )
         # save these information to args to convene evaluation.
