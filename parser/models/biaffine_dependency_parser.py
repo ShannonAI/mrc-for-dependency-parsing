@@ -21,7 +21,7 @@ from allennlp.nn.util import (
 from allennlp.nn.util import get_range_vector
 from overrides import overrides
 from torch import nn
-from transformers import BertModel, BertPreTrainedModel, RobertaModel
+from transformers import BertModel, BertPreTrainedModel, RobertaModel, AutoModel
 from transformers.modeling_bert import BertEncoder
 
 from parser.models.biaffine_dependency_config import BertDependencyConfig, RobertaDependencyConfig 
@@ -58,10 +58,7 @@ class BiaffineDependencyParser(nn.Module):
         else:
             self.pos_embedding = None
             
-        if isinstance(config, BertDependencyConfig):
-            self.bert = BertModel.from_pretrained(bert_dir, config=self.config)
-        elif isinstance(config, RobertaDependencyConfig):
-            self.bert = RobertaModel.from_pretrained(bert_dir, config=self.config)
+        self.bert = AutoModel.from_pretrained(pretrained_model_name_or_path=bert_dir)
 
         if config.additional_layer > 0:
             if config.additional_layer_type == "transformer":
