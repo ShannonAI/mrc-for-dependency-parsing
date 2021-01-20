@@ -55,13 +55,14 @@ class BiafDependency(pl.LightningModule):
         self.model_config = BiaffineDependencyConfig(
             bert_config=bert_config,
             pos_tags=args.pos_tags,
-            pos_dim=args.pos_dim,
-            additional_layer=args.additional_layer,
-            additional_layer_dim=args.additional_layer_dim,
-            additional_layer_type=args.additional_layer_type,
-            arc_representation_dim=args.arc_representation_dim,
+            dep_tags=args.dep_tags,
             tag_representation_dim=args.tag_representation_dim,
-            biaf_dropout=args.biaf_dropout
+            arc_representation_dim=args.arc_representation_dim,
+            pos_dim=args.pos_dim,
+            biaf_dropout=args.biaf_dropout,
+            additional_layer=args.additional_layer,
+            additional_layer_type=args.additional_layer_type,
+            additional_layer_dim=args.additional_layer_dim
         )        
 
         self.model = BiaffineDependencyParser(args.bert_dir, config=self.model_config)
