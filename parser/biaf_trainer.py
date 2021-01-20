@@ -215,7 +215,7 @@ class BiafDependency(pl.LightningModule):
         return new_mask
 
     def get_dataloader(self, split="train", shuffle=True):
-        dataset = DependencyDataset(file_path=os.path.join(self.args.data_dir, f"{args.data_prefix}{split}.{self.args.data_format}"),
+        dataset = DependencyDataset(file_path=os.path.join(self.args.data_dir, f"{self.args.data_prefix}{split}.{self.args.data_format}"),
                                     pos_tags=getattr(self.args, "pos_tags", None),
                                     dep_tags=getattr(self.args, "dep_tags", None),
                                     bert=self.args.bert_dir)
