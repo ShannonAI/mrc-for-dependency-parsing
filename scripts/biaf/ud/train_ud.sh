@@ -13,7 +13,7 @@ WARMUP=50
 addition=1
 
 # save directory
-OUTPUT_DIR="/userhome/yuxian/train_logs/dependency/ud-nl/biaf/finetune/lr${LR}_accumulate${accumulate}_warmup${WARMUP}_add${addition}"
+OUTPUT_DIR="/userhome/ganleilei/train_logs/dependency/ud-nl/biaf/finetune/lr${LR}_accumulate${accumulate}_warmup${WARMUP}_add${addition}"
 mkdir -p $OUTPUT_DIR
 
 python parser/biaf_trainer.py \
