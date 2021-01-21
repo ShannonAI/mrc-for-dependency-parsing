@@ -50,25 +50,6 @@ args = parser.parse_args()
 
 s2s_dir = os.path.dirname(args.s2s_ckpt)
 
-# PTB
-# proposal_dir = "/userhome/yuxian/train_logs/dependency/ptb/s2s/roberta_proposal_lr1e-5"
-# proposal_hparams = os.path.join(proposal_dir, "lightning_logs/version_3/hparams.yaml")
-# proposal_ckpt = os.path.join(proposal_dir, "epoch=5-v0.ckpt")
-#
-# query_dir = "/userhome/yuxian/train_logs/dependency/ptb/s2s/roberta_wchild_startends_lr1e-5_decay0.0_accumulate20_warmup300"
-# query_hparams = os.path.join(query_dir, "lightning_logs/version_0/hparams.yaml")
-# query_ckpt = os.path.join(query_dir, "epoch=6.ckpt")
-
-
-# CTB
-# proposal_dir = "/userhome/yuxian/train_logs/dependency/ctb/s2s/proposal_lr1e-5_20200118"
-# proposal_hparams = os.path.join(proposal_dir, "lightning_logs/version_1/hparams.yaml")
-# proposal_ckpt = os.path.join(proposal_dir, "epoch=7-v0.ckpt")
-#
-# query_dir = "/userhome/yuxian/train_logs/dependency/ctb/s2s/roberta_wchild_lr4e-5_decay0.0_accumulate40/"
-# query_hparams = os.path.join(query_dir, "lightning_logs/version_0/hparams.yaml")
-# query_ckpt = os.path.join(query_dir, "epoch=7.ckpt")
-
 
 # UD-bg
 # proposal_dir = "/userhome/yuxian/train_logs/dependency/ud-bg/s2s/xlm_proposal_lr1e-5_add1"

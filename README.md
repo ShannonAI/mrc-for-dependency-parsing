@@ -8,26 +8,11 @@ Codes for dependency parsing, including following models:
     - [ ] use mst, fix multi-gpu mst
     - [ ] change type-id of [SEP]
 
-1. (developing) Span-to-Token MRC Dependency parsing
-    - [ ] joint training stage1/stage2
-    - [ ] 第一阶段，start/end不应该独立
-    - [ ] 扫一波proposal的参数(/userhome/yuxian/train_logs/dependency/ptb/biaf/s2t/)
-    - [ ] 加label smoothing?
-    - [ ] 加反向的分数
-    - [ ] 在dp decoding时加入is_subtree的score
-    - [ ] 在argparser里支持是否加入is_subtree/反向计算分数
-    - [ ] 做实验，在dp decode时候把gt推进去是否会变好
-    - [ ] add dropout/weight-decay of bert
-    - [ ] proposal+query都换用roberta
-
 1. (developing) Span-to-Span MRC Dependency parsing
-    - [ ] 支持roberta(proposal+query)
-    - [ ] add backward score
-    - [ ] 回头检查t2t低的原因，比如改decoder的结构变为biaffine
+    - [ ] joint training stage1/stage2
     - [ ] 后面多加1-n层transformer
     - [ ] 加label smoothing
-    - [ ] decode的topk拉大看效果
-    - [ ] remove too long data in chinese version
+    - [ ] 做实验，在dp decode时候把gt推进去是否会变好
 
 ## Requirements
 * python>=3.6
@@ -64,11 +49,20 @@ See `parser/s2t_evaluate_dp.py`
 
 ### 4. Span-to-Span MRC (Developing)
 #### Train
-* proposal model: `scripts/s2s/x.sh`
-* query model: `scripts/s2t/x.sh`
+* proposal model: `scripts/s2s/*/proposal.sh`
+* s2s model: `scripts/s2t/*/s2s.sh`
 
 #### Evaluate
-See `parser/s2s_evaluate_dp.py`
+Choose the best proposal model and s2s model independently, and run
+```
+parser/s2s_evaluate_dp.py \
+--proposal_hparams <your best proposal model hparams file> \
+--proposal_ckpt <your best proposal model ckpt> \
+--s2s_ckpt <your best s2s query model hparams file> \
+--s2s_hparams <your best s2s query model ckpt> \
+--topk <use topk spans for evaluating>
+```
+
 
 ## TODO
 - [ ] refactor config/argparser hyper-parameters 
