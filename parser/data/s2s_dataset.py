@@ -200,7 +200,12 @@ class S2SDataset(BaseDataset):
         fields["parent_idxs"] = torch.LongTensor([parent_idx + query_length])
         fields["parent_starts"] = torch.LongTensor([parent_start + 1 + query_length])
         fields["parent_ends"] = torch.LongTensor([parent_end + 1 + query_length])
-        fields["parent_tags"] = torch.LongTensor([self.dep_tag_2idx[parent_tag]])
+        if parent_tag not in self.dep_tag_2idx:
+            warnings.warn(f"#{ann_idx} sample contains unknown dep_tag {parent_tag}, use 0")
+            dep_tag_idx = 0
+        else:
+            dep_tag_idx = self.dep_tag_2idx[parent_tag]
+        fields["parent_tags"] = torch.LongTensor([dep_tag_idx])
         try:
             assert parent_mask[parent_idx + query_length]
             assert parent_start_mask[parent_start + 1 + query_length]
