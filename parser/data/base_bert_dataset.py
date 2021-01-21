@@ -7,7 +7,6 @@
 
 """
 
-
 from itertools import chain
 from typing import List, Iterable, Dict
 
@@ -43,9 +42,10 @@ BERT_TOKEN_MAPPING = {
     '„': '"',
     '‹': "'",
     '›': "'",
-    "\u2013": "--", # en dash
-    "\u2014": "--", # em dash
-    }
+    "\u2013": "--",  # en dash
+    "\u2014": "--",  # en dash
+}
+
 
 class BaseDataset(Dataset):
     """
@@ -87,13 +87,13 @@ class BaseDataset(Dataset):
                 dp_heads = [x["head"] for x in annotation]
                 dp_tags = [x["deprel"] for x in annotation]
                 words = [x["form"] for x in annotation]
-                # convert unkowning words for pre-trianed models
+                # convert unknown words for bert tokens
                 cleaned_words = []
                 for word in words:
                     word = BERT_TOKEN_MAPPING.get(word, word)
                     if word == "n't" and cleaned_words:
-                            cleaned_words[-1] = cleaned_words[-1] + "n"
-                            word = "'t"
+                        cleaned_words[-1] = cleaned_words[-1] + "n"
+                        word = "'t"
                     cleaned_words.append(word)
 
                 if self.use_language_specific_pos:
@@ -175,7 +175,7 @@ class BaseDataset(Dataset):
                 counts = np.load(counts_save_path)
                 groups = np.load(group_save_path)
                 assert len(groups) == len(self), \
-                f"number of group_idxs {len(groups)} should have same length as dataset: {len(self)}"
+                    f"number of group_idxs {len(groups)} should have same length as dataset: {len(self)}"
                 success = True
             except Exception as e:
                 logger.error(f"Loading pre-computed groups from {group_save_path} failed", exc_info=1)
