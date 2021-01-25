@@ -18,6 +18,8 @@ import warnings
 from random import randint
 from parser.data.base_bert_dataset import BaseDataset
 from parser.utils.logger import get_logger
+import warnings
+from random import randint
 
 logger = get_logger(__name__)
 
@@ -150,8 +152,10 @@ if __name__ == '__main__':
 
     dataset = DependencyDataset(
         # file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC99T42/ptb3_parser/dev.conllx",
-        file_path="sample.conllu",
-        bert="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
+        # file_path="sample.conllu",
+        # bert="/data/nfsdata2/nlp_application/models/bert/bert-large-uncased-whole-word-masking",
+        file_path="/data/nfsdata2/nlp_application/datasets/treebank/LDC2005T01/data/ctb5_parser/test.conllx",
+        bert="/data/nfsdata2/nlp_application/models/bert/chinese_L-12_H-768_A-12",
     )
 
     from torch.utils.data import DataLoader
