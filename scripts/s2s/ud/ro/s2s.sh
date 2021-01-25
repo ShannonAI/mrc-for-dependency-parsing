@@ -6,9 +6,10 @@ DATA_PREFIX="ro_rrt-ud-"
 BERT_DIR="/userhome/yuxian/data/bert/xlm-roberta-large/"
 BERT_TYPE="roberta"
 
+
 # hyper-params
 DROPOUT=0.3
-LR=6e-5
+LR=1e-5
 accumulate=80
 WARMUP=50
 addition=1
@@ -36,6 +37,6 @@ python parser/s2s_query_trainer.py \
 --lr $LR \
 --gradient_clip_val=1.0 \
 --ignore_punct --predict_child \
---max_epochs 10 \
+--max_epochs 20 \
 --group_sample \
 --scheduler "linear_decay" --warmup_steps $WARMUP --final_div_factor 20
