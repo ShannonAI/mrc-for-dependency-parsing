@@ -36,8 +36,7 @@ class S2SDataset(BaseDataset):
         dep_tags: if specified, directly use it instead of counting dependency tags from file
         bert_name: "roberta" or "bert". if None, we guess type by finding "roberta" in bert path.
         max_length: max length in a sample, because bert has a maximum length of 512. if one sample's
-        length after tokenization is larger than max_length, we randomly choose another sample
-        # todo: make sure this does not happen during test
+            length after tokenization is larger than max_length, we randomly choose another sample
     """
 
     SEP_POS = "sep_pos"
@@ -73,7 +72,7 @@ class S2SDataset(BaseDataset):
 
         if self.bert_name == "roberta":
             self.SEP = "</s>"
-            # todo roberta 1/2/3/4 are not unused words like bert!
+            # roberta 1/2/3/4 are not unused words like bert!
             self.SPAN_START = 2
             self.SUBTREE_ROOT_START = 2
             self.SUBTREE_ROOT_END = 2

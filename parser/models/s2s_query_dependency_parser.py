@@ -1,27 +1,24 @@
 import logging
 from copy import deepcopy
-from typing import Dict, Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import torch
 import torch.nn.functional as F
 from allennlp.modules import InputVariationalDropout
 from allennlp.modules.seq2seq_encoders.pytorch_seq2seq_wrapper import StackedBidirectionalLstmSeq2SeqEncoder
 from allennlp.nn import util as allennlp_util
-from allennlp.nn.util import (
-    get_device_of,
-)
+from allennlp.nn.util import get_device_of
 from allennlp.nn.util import get_range_vector
 from overrides import overrides
 from torch import nn
-from transformers import BertModel, BertPreTrainedModel, RobertaModel, AutoModel
+from transformers import AutoModel
 from transformers.modeling_bert import BertEncoder
 
-from parser.models.s2s_query_dependency_config import BertMrcS2SDependencyConfig, RobertaMrcS2SDependencyConfig, S2SConfig
+from parser.models.s2s_query_dependency_config import S2SConfig
 
 logger = logging.getLogger(__name__)
 
 
-# class BiaffineDependencyS2SQueryParser(BertPreTrainedModel):
 class BiaffineDependencyS2SQueryParser(torch.nn.Module):
     """
     This dependency parser follows the model of
@@ -34,7 +31,6 @@ class BiaffineDependencyS2SQueryParser(torch.nn.Module):
         bert_dir: pretrained bert directory
     """
 
-    # def __init__(self, config: Union[BertMrcS2SDependencyConfig, RobertaMrcS2SDependencyConfig]):
     def __init__(self, config: S2SConfig, bert_dir: str = ""):
         # super().__init__(config)
         super().__init__()
@@ -57,12 +53,6 @@ class BiaffineDependencyS2SQueryParser(torch.nn.Module):
         else:
             self.pos_embedding = None
 
-        # if isinstance(config, BertMrcS2SDependencyConfig):
-        #     self.bert = BertModel(config)
-        #     self.arch = "bert"
-        # else:
-        #     self.roberta = RobertaModel(config)
-        #     self.arch = "roberta"
         self.bert = AutoModel.from_pretrained(pretrained_model_name_or_path=bert_dir, config=config.bert_config)
 
         if config.additional_layer > 0:
@@ -71,7 +61,6 @@ class BiaffineDependencyS2SQueryParser(torch.nn.Module):
                 new_config.hidden_size = hidden_size
                 new_config.num_hidden_layers = config.additional_layer
                 new_config.hidden_dropout_prob = new_config.attention_probs_dropout_prob = config.mrc_dropout
-                # new_config.attention_probs_dropout_prob = config.biaf_dropout  # todo add to hparams and tune
                 self.additional_encoder = BertEncoder(new_config)
                 self.additional_encoder.apply(self._init_bert_weights)
             else:
@@ -186,7 +175,6 @@ class BiaffineDependencyS2SQueryParser(torch.nn.Module):
             embedded_text_input = torch.cat([embedded_text_input, embedded_pos_tags], -1)
             if self.fuse_layer is not None:
                 embedded_text_input = self.fuse_layer(embedded_text_input)
-        # todo compare normal dropout with InputVariationalDropout
         embedded_text_input = self._dropout(embedded_text_input)
 
         if self.additional_encoder is not None:
@@ -221,10 +209,18 @@ class BiaffineDependencyS2SQueryParser(torch.nn.Module):
         parent_end_mask = torch.logical_and(parent_end_mask, word_mask)
         parent_end_scores = parent_end_scores + (~parent_end_mask).float() * minus_inf
 
-        parent_probs = F.softmax(parent_scores, dim=-1)
-        parent_start_probs = F.softmax(parent_start_scores, dim=-1)
-        parent_end_probs = F.softmax(parent_end_scores, dim=-1)
-        parent_tag_probs = F.softmax(parent_tag_scores, dim=-1)
+        if self.config.normalize == "softmax":
+            parent_probs = F.softmax(parent_scores, dim=-1)
+            parent_start_probs = F.softmax(parent_start_scores, dim=-1)
+            parent_end_probs = F.softmax(parent_end_scores, dim=-1)
+            parent_tag_probs = F.softmax(parent_tag_scores, dim=-1)
+        elif self.config.normalize == "sigmoid":
+            parent_probs = torch.sigmoid(parent_scores)
+            parent_start_probs = torch.sigmoid(parent_start_scores)
+            parent_end_probs = torch.sigmoid(parent_end_scores)
+            parent_tag_probs = torch.sigmoid(parent_tag_scores)
+        else:
+            raise ValueError("only support softmax/sigmoid!")
 
         output = (parent_probs, parent_tag_probs, parent_start_probs, parent_end_probs)
 
@@ -232,7 +228,6 @@ class BiaffineDependencyS2SQueryParser(torch.nn.Module):
             child_scores = self.child_feedforward(encoded_text).squeeze(-1)
             child_start_scores = self.child_start_feedforward(encoded_text).squeeze(-1)
             child_end_scores = self.child_end_feedforward(encoded_text).squeeze(-1)
-            # todo add child mask - child should be inside the origin span
             if child_mask is None:
                 child_mask = torch.ones_like(word_mask)
             else:
@@ -249,9 +244,18 @@ class BiaffineDependencyS2SQueryParser(torch.nn.Module):
         batch_range_vector = get_range_vector(batch_size, get_device_of(encoded_text))  # [bsz]
         if parent_idxs is not None:
             # [bsz, seq_len]
-            parent_logits = F.log_softmax(parent_scores, dim=-1)
-            parent_arc_nll = -parent_logits[batch_range_vector, parent_idxs]
-            parent_arc_nll = parent_arc_nll.mean()
+            if self.config.normalize == "softmax":
+                parent_logits = F.log_softmax(parent_scores, dim=-1)
+                parent_arc_nll = -parent_logits[batch_range_vector, parent_idxs]
+                parent_arc_nll = parent_arc_nll.mean()
+            else:
+
+                parent_root_loss = F.binary_cross_entropy_with_logits(
+                    parent_scores,
+                    self.to_onehot(parent_idxs, seq_len),
+                    reduction="none"
+                )
+                parent_arc_nll = (parent_root_loss * parent_mask).sum() / (parent_mask.sum() + 1e-8)
             output = output + (parent_arc_nll, )
 
             if parent_tags is not None:
@@ -260,15 +264,31 @@ class BiaffineDependencyS2SQueryParser(torch.nn.Module):
                 output = output + (parent_tag_nll, )
 
         if parent_starts is not None:
-            # [bsz, seq_len]
-            parent_start_logits = F.log_softmax(parent_start_scores, dim=-1)
-            parent_start_nll = -parent_start_logits[batch_range_vector, parent_starts].mean()
+            if self.config.normalize == "softmax":
+                # [bsz, seq_len]
+                parent_start_logits = F.log_softmax(parent_start_scores, dim=-1)
+                parent_start_nll = -parent_start_logits[batch_range_vector, parent_starts].mean()
+            else:
+                parent_start_loss = F.binary_cross_entropy_with_logits(
+                    parent_start_scores,
+                    self.to_onehot(parent_starts, seq_len),
+                    reduction="none"
+                )
+                parent_start_nll = (parent_start_loss * parent_start_mask).sum() / (parent_start_mask.sum() + 1e-8)
             output = output + (parent_start_nll,)
 
         if parent_ends is not None:
-            # [bsz, seq_len]
-            parent_end_logits = F.log_softmax(parent_end_scores, dim=-1)
-            parent_end_nll = -parent_end_logits[batch_range_vector, parent_ends].mean()
+            if self.config.normalize == "softmax":
+                # [bsz, seq_len]
+                parent_end_logits = F.log_softmax(parent_end_scores, dim=-1)
+                parent_end_nll = -parent_end_logits[batch_range_vector, parent_ends].mean()
+            else:
+                parent_end_loss = F.binary_cross_entropy_with_logits(
+                    parent_end_scores,
+                    self.to_onehot(parent_ends, seq_len),
+                    reduction="none"
+                )
+                parent_end_nll = (parent_end_loss * parent_end_mask).sum() / (parent_end_mask.sum() + 1e-8)
             output = output + (parent_end_nll,)
 
         if self.config.predict_child:
@@ -316,6 +336,23 @@ class BiaffineDependencyS2SQueryParser(torch.nn.Module):
 
         return embeddings[:, 0, :], orig_embeddings
 
+    @staticmethod
+    def to_onehot(labels: torch.LongTensor, seq_len: int) -> torch.FloatTensor:
+        """
+        convert categorical start/end labels to ont-hot labels, used for computing bce loss
+        Args:
+            labels: tensor of shape [bsz]
+            seq_len: sequence length
+        Returns:
+            onehot_labels: tensor of shape [bsz, seq_len]
+        """
+        bsz = labels.size(0)
+        labels = labels.unsqueeze(-1)  # [bsz, 1]
+        onehot = labels.new_zeros([bsz, seq_len])
+        onehot.scatter_(1, labels, 1)  # onehot[i][labels[i][j]] = 1
+        onehot = onehot.float()
+        return onehot
+
 
 if __name__ == '__main__':
     from transformers import AutoConfig
@@ -347,6 +384,7 @@ if __name__ == '__main__':
         pos_dim=100,
         mrc_dropout=0.3,
         predict_child=True,
+        normalize="sigmoid"
     )
     mrc_dep = BiaffineDependencyS2SQueryParser(
         bert_dir=bert_path,
