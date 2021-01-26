@@ -1,19 +1,19 @@
+
 export PYTHONPATH="$PWD"
 export TOKENIZERS_PARALLELISM=false
 
-DATA_DIR="/userhome/yuxian/data/parser/ud-treebanks/ud-treebanks-v2.2/UD_Romanian-RRT"
-DATA_PREFIX="ro_rrt-ud-"
+DATA_DIR="/userhome/yuxian/data/parser/ud-treebanks/ud-treebanks-v2.2/UD_French-GSD"
+DATA_PREFIX="fr_gsd-ud-"
 BERT_DIR="/userhome/yuxian/data/bert/xlm-roberta-large/"
 BERT_TYPE="roberta"
 
 # hyper-params
-LR=2e-5
 DROPOUT=0.3
 precision=16
-addition=2
-max_epoch=20
+LR=2e-5
+max_epoch=10
 
-OUTPUT_DIR="/userhome/yuxian/train_logs/dependency/ud-ro/s2s/xlm_proposal_lr${LR}_add${addition}_epoch${max_epoch}"
+OUTPUT_DIR="/userhome/yuxian/train_logs/dependency/ud-fr/s2s/xlm_proposal_lr${LR}_maxepoch${max_epoch}"
 mkdir -p $OUTPUT_DIR
 
 python parser/span_proposal_trainer.py \
@@ -25,14 +25,13 @@ python parser/span_proposal_trainer.py \
 --data_format 'conllu' \
 --pos_dim 100 \
 --bert_dir $BERT_DIR \
---additional_layer_dim 1024 \
---additional_layer $addition --additional_layer_type "transformer" \
+--additional_layer_dim 1124 \
 --mrc_dropout $DROPOUT \
 --workers 8 \
 --gpus="0," \
 --accelerator "ddp" \
---batch_size 32 \
---accumulate_grad_batches 4 \
+--batch_size 16 \
+--accumulate_grad_batches 8 \
 --lr $LR \
 --gradient_clip_val=1.0 \
 --ignore_punct \

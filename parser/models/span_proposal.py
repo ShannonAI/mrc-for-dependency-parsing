@@ -12,7 +12,7 @@ from allennlp.nn import Activation
 from allennlp.nn import util as allennlp_util
 from overrides import overrides
 from torch import nn
-from transformers import BertPreTrainedModel, AutoModel
+from transformers import AutoModel
 from transformers.modeling_bert import BertEncoder
 
 from parser.models.span_proposal_config import SpanProposalConfig
@@ -22,10 +22,7 @@ logger = logging.getLogger(__name__)
 
 class SpanProposal(torch.nn.Module):
     """
-    This dependency parser follows the model of
-    [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)]
-    (https://arxiv.org/abs/1611.01734) .
-    But We use span-to-token MRC to extract parent and labels
+    This model is used to extract candidate start/end subtree span rooted at each token.
 
     Args:
         config: SpanProposal Config that defines model dim and structure
@@ -38,7 +35,6 @@ class SpanProposal(torch.nn.Module):
 
         self.config = config
 
-        num_dep_labels = len(config.dep_tags)
         num_pos_labels = len(config.pos_tags)
         hidden_size = config.additional_layer_dim if config.additional_layer > 0 else config.pos_dim + config.bert_config.hidden_size
 
@@ -135,6 +131,7 @@ class SpanProposal(torch.nn.Module):
         Returns:
             span_start_logits: [batch_size, num_words, num_words]
             span_end_logits: [batch_size, num_words, num_words]
+            span_loss: if subtree_spans is given.
 
         """
         # [bsz, seq_len, hidden]
@@ -187,7 +184,6 @@ class SpanProposal(torch.nn.Module):
             F.log_softmax(span_start_scores, dim=-1),
             F.log_softmax(span_end_scores, dim=-1)
         )
-
         if subtree_spans is not None:
 
             start_loss = F.cross_entropy(span_start_scores.view(batch_size*seq_len, -1),

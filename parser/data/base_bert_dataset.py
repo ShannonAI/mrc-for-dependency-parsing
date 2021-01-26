@@ -16,6 +16,7 @@ import warnings
 from allennlp.data.token_indexers import PretrainedTransformerIndexer
 from conllu import parse_incr
 from torch.utils.data import Dataset
+from parser.data.tree_utils import is_cyclic
 import codecs
 
 from parser.data.samplers.grouped_sampler import create_lengths_groups
@@ -104,7 +105,7 @@ class BaseDataset(Dataset):
 
             logger.info(f"Read {len(self.data)} sentences from conll dataset at: %s", file_path)
 
-        cyclic = [self.is_cyclic(d[-1]) for d in self.data]
+        cyclic = [is_cyclic(d[-1]) for d in self.data]
         cyclic_idxs = [idx for idx, c in enumerate(cyclic) if c]
         if len(cyclic_idxs) > 0:
             warnings.warn(f"found {len(cyclic_idxs)} cyclic sample in dataset of id: {cyclic_idxs}")
@@ -206,23 +207,3 @@ class BaseDataset(Dataset):
                 warnings.warn(f"replace normally expect token in `positions` has not been split to pieces."
                               f"This warning should NOT happen unless during batch prediction at evaluation")
             token_ids[offset[0]] = replace_id
-
-    @staticmethod
-    def is_cyclic(dp_heads: List[int]) -> bool:
-        """return True if dp_heads is cyclic, else False"""
-        dp_heads = [0] + dp_heads
-        detected = [False] * len(dp_heads)
-        detected[0] = True
-        for word_idx, parent_idx in enumerate(dp_heads[1:]):
-            if detected[word_idx]:
-                continue
-            ancestors = set()
-            node = word_idx
-            while not detected[node]:
-                ancestors.add(node)
-                node = dp_heads[node]
-                if node in ancestors:
-                    return True
-            for node in ancestors:
-                detected[node] = True
-        return False

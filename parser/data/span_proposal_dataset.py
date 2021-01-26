@@ -17,6 +17,8 @@ import torch
 from parser.data.base_bert_dataset import BaseDataset
 from parser.data.tree_utils import build_subtree_spans
 from parser.utils.logger import get_logger
+from random import randint
+import warnings
 
 logger = get_logger(__name__)
 
@@ -34,6 +36,8 @@ class SubTreeProposalDataset(BaseDataset):
             provided in the conllu format.
         pos_tags: if specified, directly use it instead of counting POS tags from file
         dep_tags: if specified, directly use it instead of counting dependency tags from file
+        max_length: max length in a sample, because bert has a maximum length of 512. if one sample's
+            length after tokenization is larger than max_length, we randomly choose another sample
     """
 
     def __init__(
@@ -43,8 +47,10 @@ class SubTreeProposalDataset(BaseDataset):
         use_language_specific_pos: bool = False,
         pos_tags: List[str] = None,
         dep_tags: List[str] = None,
+        max_length: int = 512
     ) -> None:
         super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
+        self.max_length = max_length
 
     def __getitem__(self, idx):
         """
@@ -66,6 +72,11 @@ class SubTreeProposalDataset(BaseDataset):
         }
 
         bert_mismatch_fields = self.get_mismatch_token_idx(words)
+
+        if len(bert_mismatch_fields["token_ids"]) > self.max_length:
+            warnings.warn(f"sample id {idx} exceeds max-length {self.max_length}")
+            return self[randint(0, len(self) - 1)]
+
         fields.update(bert_mismatch_fields)
 
         fields["pos_tags"] = torch.LongTensor([self.pos_tag_2idx[p] for p in pos_tags])

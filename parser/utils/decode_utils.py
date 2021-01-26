@@ -14,6 +14,8 @@ import torch
 from typing import List, Tuple, Dict, Union
 from collections import defaultdict
 import sys
+from allennlp.nn.chu_liu_edmonds import decode_mst
+import warnings
 
 EPS = sys.float_info.min
 
@@ -305,6 +307,74 @@ class DecodeStruct:
 
         return dep_heads, dep_tags
 
+    def mst_decode(self) -> Tuple[List[int], List[int]]:
+        """
+        do mst decode:
+        S[i][j] = max_{T1, T2}{Score_span(T1) + Score_span(T2) + Score_link(T1, T2), T1.r==i, T2.r==j}
+        """
+        if self.span_lst is None:
+            self.get_spans_infos()
+
+        root2span_idxs = defaultdict(list)
+        for idx, (root, start, end) in enumerate(self.span_lst):
+            root2span_idxs[root].append(idx)
+
+        seq_len = len(self.words)
+
+        # scores[i,j] = "Score that i is the head of j"
+        # tag_ids[i, j] = "best label of arc i->j"
+        scores = torch.zeros([seq_len, seq_len])
+        tag_ids = torch.zeros([seq_len, seq_len], dtype=torch.long)
+        for i in range(seq_len):
+            for j in range(1, seq_len):  # root cannot be child
+                # compute energy[i][j] and tag_ids[i][j]
+                max_score = -math.inf
+                max_tag_id = None
+                for parent_idx in root2span_idxs[i]:
+                    parent_root, parent_start, parent_end = self.span_lst[parent_idx]
+                    for child_idx in root2span_idxs[j]:
+                        child_root, child_start, child_end = self.span_lst[child_idx]
+                        # for computational stability, we use log prob for comparision
+                        s = (
+                            self.span_root_score_lst[parent_idx]
+                            + self.span_root_score_lst[child_idx]
+                            + math.log(self.parent_arc_score_lst[child_idx][parent_root]+EPS)
+                            + math.log(self.parent_start_score_lst[child_idx][parent_start]+EPS)
+                            + math.log(self.parent_end_score_lst[child_idx][parent_end]+EPS)
+                            + math.log(self.child_score_lst[parent_idx][child_root]+EPS)
+                            + math.log(self.child_start_score_lst[parent_idx][child_start]+EPS)
+                            + math.log(self.child_end_score_lst[parent_idx][child_end]+EPS)
+                             )
+                        t = self.parent_tags_idxs_lst[child_idx][parent_root]
+                        if s > max_score:
+                            max_score = s
+                            max_tag_id = t
+
+                if max_tag_id is None:
+                    warnings.warn(f"no valid arc between {i} and {j} for {self.words} "
+                                  f"with spans: {root2span_idxs[i] + root2span_idxs[j]}")
+                    max_score = 0.0
+                    max_tag_id = 0
+
+                scores[i][j] = math.exp(max_score)
+                tag_ids[i][j] = max_tag_id
+
+        # Decode the heads. Because we modify the scores to prevent
+        # adding in word -> ROOT edges, we need to find the labels ourselves.
+        # print(scores)
+        instance_heads, _ = decode_mst(scores.numpy(), seq_len, has_labels=False)
+
+        # Find the labels which correspond to the edges in the max spanning tree.
+        instance_head_tags = []
+        for child, parent in enumerate(instance_heads):
+            instance_head_tags.append(tag_ids[parent, child].item())
+        # We don't care what the head or tag is for the root token, but by default it's
+        # not necessarily the same in the batched vs unbatched case, which is annoying.
+        # Here we'll just set them to zero.
+        instance_heads[0] = 0
+        instance_head_tags[0] = 0
+        return instance_heads.tolist()[1:], instance_head_tags[1:]
+
     def dp_decode(self, arc_alpha=1.0) -> SubTreeStruct:
         """
         decode highest score tree from self using bottom-up dynamic-programming
@@ -371,9 +441,9 @@ class DecodeStruct:
                                                    math.log(self.parent_arc_score_lst[subtree_idx][word_idx]+EPS)
                                                    + math.log(self.parent_start_score_lst[subtree_idx][start]+EPS)
                                                    + math.log(self.parent_end_score_lst[subtree_idx][end]+EPS)
-                                                   + math.log(self.child_score_lst[subtree_idx][subtree_root]+EPS)
-                                                   + math.log(self.child_start_score_lst[subtree_idx][subtree_start]+EPS)
-                                                   + math.log(self.child_score_lst[subtree_idx][subtree_end]+EPS)
+                                                   + math.log(self.child_score_lst[span_idx][subtree_root]+EPS)
+                                                   + math.log(self.child_start_score_lst[span_idx][subtree_start]+EPS)
+                                                   + math.log(self.child_end_score_lst[span_idx][subtree_end]+EPS)
                                                 ))
                     best_splits, best_score = find_max_splits(start=start, end=word_idx-1,
                                                               spans=children_spans,
@@ -399,9 +469,9 @@ class DecodeStruct:
                                                    math.log(self.parent_arc_score_lst[subtree_idx][word_idx]+EPS)
                                                    + math.log(self.parent_start_score_lst[subtree_idx][start]+EPS)
                                                    + math.log(self.parent_end_score_lst[subtree_idx][end]+EPS)
-                                                   + math.log(self.child_score_lst[subtree_idx][subtree_root]+EPS)
-                                                   + math.log(self.child_start_score_lst[subtree_idx][subtree_start]+EPS)
-                                                   + math.log(self.child_score_lst[subtree_idx][subtree_end] + EPS)
+                                                   + math.log(self.child_score_lst[span_idx][subtree_root]+EPS)
+                                                   + math.log(self.child_start_score_lst[span_idx][subtree_start]+EPS)
+                                                   + math.log(self.child_end_score_lst[span_idx][subtree_end] + EPS)
                                                ))
                     best_splits, best_score = find_max_splits(start=word_idx+1, end=end,
                                                               spans=children_spans,
