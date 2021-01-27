@@ -3,7 +3,7 @@ from parser.models.biaffine_dependency_config import BertDependencyConfig
 from parser.models.t2t_dependency_config import BertMrcT2TDependencyConfig
 from parser.models.span_proposal_config import SpanProposalConfig
 from parser.models.s2t_query_dependency_config import BertMrcS2TQueryDependencyConfig, RobertaMrcS2TQueryDependencyConfig
-from parser.models.s2s_query_dependency_config import BertMrcS2SDependencyConfig, RobertaMrcS2SDependencyConfig, S2SConfig
+from parser.models.s2s_query_dependency_config import S2SConfig
 
 from parser.models.biaffine_dependency_parser import BiaffineDependencyParser
 from parser.models.t2t_dependency_parser import BiaffineDependencyT2TParser

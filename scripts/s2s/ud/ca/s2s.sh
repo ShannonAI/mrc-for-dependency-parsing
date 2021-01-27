@@ -1,5 +1,4 @@
-## Gridsearch
-cd /userhome/yuxian/shannon_parser
+
 export PYTHONPATH="$PWD"
 export TOKENIZERS_PARALLELISM=false
 
@@ -10,14 +9,14 @@ BERT_TYPE="roberta"
 
 
 # hyper-params
-LR=8e-5
+LR=1e-5
 DROPOUT=0.3
 accumulate=40
 WARMUP=100
-addition=1
+addition=3
 
 # save directory
-OUTPUT_DIR="/userhome/yuxian/train_logs/dependency/ud-ca/s2s/lr${LR}_accumulate${accumulate}_warmup${WARMUP}_add${addition}"
+OUTPUT_DIR="/userhome/yuxian/train_logs/dependency/ud-ca/s2s/s2s_lr${LR}_accumulate${accumulate}_warmup${WARMUP}_add${addition}"
 mkdir -p $OUTPUT_DIR
 
 python parser/s2s_query_trainer.py \
@@ -38,6 +37,6 @@ python parser/s2s_query_trainer.py \
   --lr $LR \
   --gradient_clip_val=1.0 \
   --ignore_punct --predict_child \
-  --max_epochs 10 \
+  --max_epochs 40 \
   --group_sample \
   --scheduler "linear_decay" --warmup_steps $WARMUP --final_div_factor 20

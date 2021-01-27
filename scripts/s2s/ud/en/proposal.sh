@@ -9,12 +9,13 @@ BERT_TYPE="roberta"
 
 
 # hyper-params
+LR=2e-5
 DROPOUT=0.3
 precision=16
-LR=1e-5
-max_epoch=10
+max_epoch=30
+addition=2
 
-OUTPUT_DIR="/userhome/yuxian/train_logs/dependency/ud-en/s2s/xlm_proposal_lr${LR}_maxepoch${max_epoch}"
+OUTPUT_DIR="/userhome/yuxian/train_logs/dependency/ud-en/s2s/xlm_proposal_lr${LR}_maxepoch${max_epoch}_add${addition}"
 mkdir -p $OUTPUT_DIR
 
 python parser/span_proposal_trainer.py \
@@ -26,13 +27,14 @@ python parser/span_proposal_trainer.py \
 --data_format 'conllu' \
 --pos_dim 100 \
 --bert_dir $BERT_DIR \
---additional_layer_dim 1124 \
+--additional_layer_dim 1024 \
+--additional_layer $addition --additional_layer_type "transformer" \
 --mrc_dropout $DROPOUT \
 --workers 8 \
---gpus="0," \
+--gpus="0,1" \
 --accelerator "ddp" \
 --batch_size 16 \
---accumulate_grad_batches 8 \
+--accumulate_grad_batches 4 \
 --lr $LR \
 --gradient_clip_val=1.0 \
 --ignore_punct \
