@@ -306,7 +306,7 @@ def main():
         replace_sampler_ddp=False
     )
     trainer.fit(model)
-
+    print("best model path:", trainer.checkpoint_callback.best_model_path)
     trainer.test()
 
 if __name__ == '__main__':
