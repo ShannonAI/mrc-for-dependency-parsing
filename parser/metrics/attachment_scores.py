@@ -160,35 +160,35 @@ class AttachmentScores(Metric):
         # sentence length
         cur_sent_len = len(nwords) - 1
         if cur_sent_len >= 1 and cur_sent_len <= 10:
-            self.unlabeled_correct_sent_length[0] += correct_indices.sum()
-            self.labeled_correct_sent_length[0] += correct_labels_and_indices.sum()
-            self.total_words_sent_length[0] += mask.sum()
+            self.unlabeled_correct_sent_len[0] += correct_indices.sum()
+            self.labeled_correct_sent_len[0] += correct_labels_and_indices.sum()
+            self.total_words_sent_len[0] += mask.sum()
         elif cur_sent_len >=11 and cur_sent_len <= 20:
-            self.unlabeled_correct_sent_length[1] += correct_indices.sum()
-            self.labeled_correct_sent_length[1] += correct_labels_and_indices.sum()
-            self.total_words_sent_length[1] += mask.sum()
+            self.unlabeled_correct_sent_len[1] += correct_indices.sum()
+            self.labeled_correct_sent_len[1] += correct_labels_and_indices.sum()
+            self.total_words_sent_len[1] += mask.sum()
         elif cur_sent_len >= 21 and cur_sent_len <= 30:
-            self.unlabeled_correct_sent_length[2] += correct_indices.sum()
-            self.labeled_correct_sent_length[2] += correct_labels_and_indices.sum()
-            self.total_words_sent_length[2] += mask.sum()
+            self.unlabeled_correct_sent_len[2] += correct_indices.sum()
+            self.labeled_correct_sent_len[2] += correct_labels_and_indices.sum()
+            self.total_words_sent_len[2] += mask.sum()
         elif cur_sent_len >= 31 and cur_sent_len <= 40:
-            self.unlabeled_correct_sent_length[3] += correct_indices.sum()
-            self.labeled_correct_sent_length[3] += correct_labels_and_indices.sum()
-            self.total_words_sent_length[3] += mask.sum()
+            self.unlabeled_correct_sent_len[3] += correct_indices.sum()
+            self.labeled_correct_sent_len[3] += correct_labels_and_indices.sum()
+            self.total_words_sent_len[3] += mask.sum()
         elif cur_sent_len >= 41 and cur_sent_len <= 50:
-            self.unlabeled_correct_sent_length[4] += correct_indices.sum()
-            self.labeled_correct_sent_length[4] += correct_labels_and_indices.sum()
-            self.total_words_sent_length[4] += mask.sum()
+            self.unlabeled_correct_sent_len[4] += correct_indices.sum()
+            self.labeled_correct_sent_len[4] += correct_labels_and_indices.sum()
+            self.total_words_sent_len[4] += mask.sum()
         else:
-            self.unlabeled_correct_sent_length[5] += correct_indices.sum()
-            self.labeled_correct_sent_length[5] += correct_labels_and_indices.sum()
-            self.total_words_sent_length[5] += mask.sum()
+            self.unlabeled_correct_sent_len[5] += correct_indices.sum()
+            self.labeled_correct_sent_len[5] += correct_labels_and_indices.sum()
+            self.total_words_sent_len[5] += mask.sum()
         
        
     def compute_length_analysis(self):
         epsilon = 1e-4
         metrics = {}
         for idx, v in {0: 1, 1: 11, 2: 21, 3: 31, 4: 41, 5: 51}.items():
-            metrics["UAS_" + str(v)] = self.unlabeled_correct_sent_length[idx] / (self.total_words_sent_length[idx] + epsilon)
-            metrics["LAS_" + str(v)] = self.labeled_correct_sent_length[idx] / (self.total_words_sent_length[idx] + epsilon) 
+            metrics["UAS_" + str(v)] = self.unlabeled_correct_sent_len[idx] / (self.total_words_sent_len[idx] + epsilon)
+            metrics["LAS_" + str(v)] = self.labeled_correct_sent_len[idx] / (self.total_words_sent_len[idx] + epsilon) 
         return metrics
