@@ -188,7 +188,7 @@ class AttachmentScores(Metric):
     def compute_length_analysis(self):
         epsilon = 1e-4
         metrics = {}
-        for idx in [1, 11, 21, 31, 41, 51]:
-            metrics["UAS_" + str(idx)] = self.unlabeled_correct_sent_length[idx] / (self.total_words_sent_length[idx] + epsilon)
-            metrics["LAS_" + str(idx)] = self.labeled_correct_sent_length[idx] / (self.total_words_sent_length[idx] + epsilon) 
+        for idx, v in {0: 1, 1: 11, 2: 21, 3: 31, 4: 41, 5: 51}.items():
+            metrics["UAS_" + str(v)] = self.unlabeled_correct_sent_length[idx] / (self.total_words_sent_length[idx] + epsilon)
+            metrics["LAS_" + str(v)] = self.labeled_correct_sent_length[idx] / (self.total_words_sent_length[idx] + epsilon) 
         return metrics
