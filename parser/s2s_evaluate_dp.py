@@ -320,6 +320,7 @@ for k in [topk]:
                     pred_labels[child] = tag_idx
                 pred_heads = pred_heads[1:]  # remove root
                 pred_labels = pred_labels[1:]
+            '''
             metric.update(
                 torch.LongTensor(pred_heads),
                 torch.LongTensor(pred_labels),
@@ -330,5 +331,16 @@ for k in [topk]:
                     pos_tags=ann_info.pos_tags[: len(gold_labels)]
                 )
             )
-
+            '''
+            metric.update_length_analysis(
+                torch.LongTensor(pred_heads),
+                torch.LongTensor(pred_labels),
+                torch.LongTensor(gold_heads),
+                torch.LongTensor(gold_labels),
+                ann_info.words,
+                query_model._get_mask_for_eval(
+                    mask=torch.BoolTensor([True] * len(gold_labels)),
+                    pos_tags=ann_info.pos_tags[: len(gold_labels)]
+                )
+            )
         print(metric.compute())

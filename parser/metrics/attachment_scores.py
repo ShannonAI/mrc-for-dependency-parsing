@@ -115,8 +115,8 @@ class AttachmentScores(Metric):
         predicted_labels: torch.Tensor,
         gold_indices: torch.Tensor,
         gold_labels: torch.Tensor,
-        nwords,
-        subspans,
+        nwords: List,
+        #subspans: List, # list of [[(word_idx, start, end)]]
         mask: Optional[torch.BoolTensor] = None,
     ):
         """
@@ -133,7 +133,7 @@ class AttachmentScores(Metric):
         mask : `torch.BoolTensor`, optional (default = `None`).
             A tensor of the same shape as `predicted_indices`.
         """
-
+        print('nwords type:', type(nwords))
         if mask is None:
             mask = torch.ones_like(predicted_indices).bool()
 
