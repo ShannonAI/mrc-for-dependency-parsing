@@ -191,4 +191,7 @@ class AttachmentScores(Metric):
         for idx, v in {0: 1, 1: 11, 2: 21, 3: 31, 4: 41, 5: 51}.items():
             metrics["UAS_" + str(v)] = self.unlabeled_correct_sent_len[idx] / (self.total_words_sent_len[idx] + epsilon)
             metrics["LAS_" + str(v)] = self.labeled_correct_sent_len[idx] / (self.total_words_sent_len[idx] + epsilon) 
+
+        metrics["UAS"] = self.unlabeled_correct / (self.total_words + epsilon)
+        metrics["LAS"] = self.labeled_correct / (self.total_words + epsilon)
         return metrics
