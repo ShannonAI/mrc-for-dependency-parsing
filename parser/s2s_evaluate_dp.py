@@ -343,4 +343,4 @@ for k in [topk]:
                     pos_tags=ann_info.pos_tags[: len(gold_labels)]
                 )
             )
-        print(metric.compute())
+        print(metric.compute_length_analysis())
