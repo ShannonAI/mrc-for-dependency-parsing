@@ -8,13 +8,14 @@ BERT_TYPE="roberta"
 
 # hyper-params
 DROPOUT=0.3
-LR=6e-5
-accumulate=10
+LR=4e-5
+accumulate=20
 WARMUP=50
 addition=1
+norm="sigmoid"
 
 # save directory
-OUTPUT_DIR="/userhome/yuxian/train_logs/dependency/ud-bg/s2s/lr${LR}_accumulate${accumulate}_warmup${WARMUP}_add${addition}"
+OUTPUT_DIR="/userhome/yuxian/train_logs/dependency/ud-bg/s2s/lr${LR}_accumulate${accumulate}_warmup${WARMUP}_add${addition}_norm${norm}"
 mkdir -p $OUTPUT_DIR
 
 python parser/s2s_query_trainer.py \
@@ -23,13 +24,13 @@ python parser/s2s_query_trainer.py \
 --data_prefix $DATA_PREFIX \
 --data_dir $DATA_DIR \
 --data_format 'conllu' \
---pos_dim 100 \
+--pos_dim 100 --normalize $norm  \
 --bert_dir $BERT_DIR --bert_name $BERT_TYPE \
 --additional_layer_dim 768 \
 --additional_layer $addition --additional_layer_type "transformer" \
 --mrc_dropout $DROPOUT \
 --workers 24 \
---gpus="0,1,2,3,4,5,6,7" \
+--gpus="0,1,2,3" \
 --accelerator "ddp" \
 --batch_size 16 \
 --accumulate_grad_batches $accumulate \
