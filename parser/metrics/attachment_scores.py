@@ -133,7 +133,6 @@ class AttachmentScores(Metric):
         mask : `torch.BoolTensor`, optional (default = `None`).
             A tensor of the same shape as `predicted_indices`.
         """
-        print('nwords type:', type(nwords))
         if mask is None:
             mask = torch.ones_like(predicted_indices).bool()
 
@@ -159,27 +158,33 @@ class AttachmentScores(Metric):
         self.total_words += total_words
 
         # sentence length
-        sent_length_bucket = {1: [], 11:[], 21:[], 31:[], 41:[], 51:[]}
-        for idx, cur_sent_len in enumerate(nwords):
-            if cur_sent_len >= 1 and cur_sent_len <= 10:
-                sent_length_bucket[1].append(idx)
-            elif cur_sent_len >=11 and cur_sent_len <= 20:
-                sent_length_bucket[11].append(idx)
-            elif cur_sent_len >= 21 and cur_sent_len <= 30:
-                sent_length_bucket[21].append(idx)
-            elif cur_sent_len >= 31 and cur_sent_len <= 40:
-                sent_length_bucket[31].append(idx)
-            elif cur_sent_len >= 41 and cur_sent_len <= 50:
-                sent_length_bucket[41].append(idx)
-            else:
-                sent_length_bucket[51].append(idx)
+        cur_sent_len = len(nwords) - 1
+        if cur_sent_len >= 1 and cur_sent_len <= 10:
+            self.unlabeled_correct_sent_length[0] += correct_indices.sum()
+            self.labeled_correct_sent_length[0] += correct_labels_and_indices.sum()
+            self.total_words_sent_length[0] += mask.sum()
+        elif cur_sent_len >=11 and cur_sent_len <= 20:
+            self.unlabeled_correct_sent_length[1] += correct_indices.sum()
+            self.labeled_correct_sent_length[1] += correct_labels_and_indices.sum()
+            self.total_words_sent_length[1] += mask.sum()
+        elif cur_sent_len >= 21 and cur_sent_len <= 30:
+            self.unlabeled_correct_sent_length[2] += correct_indices.sum()
+            self.labeled_correct_sent_length[2] += correct_labels_and_indices.sum()
+            self.total_words_sent_length[2] += mask.sum()
+        elif cur_sent_len >= 31 and cur_sent_len <= 40:
+            self.unlabeled_correct_sent_length[3] += correct_indices.sum()
+            self.labeled_correct_sent_length[3] += correct_labels_and_indices.sum()
+            self.total_words_sent_length[3] += mask.sum()
+        elif cur_sent_len >= 41 and cur_sent_len <= 50:
+            self.unlabeled_correct_sent_length[4] += correct_indices.sum()
+            self.labeled_correct_sent_length[4] += correct_labels_and_indices.sum()
+            self.total_words_sent_length[4] += mask.sum()
+        else:
+            self.unlabeled_correct_sent_length[5] += correct_indices.sum()
+            self.labeled_correct_sent_length[5] += correct_labels_and_indices.sum()
+            self.total_words_sent_length[5] += mask.sum()
         
-        for k, v in sent_length_bucket.items():
-            self.unlabeled_correct_sent_length[k] += correct_indices[v].sum()
-            self.labeled_correct_sent_length[k] += correct_labels_and_indices[v].sum()
-            self.total_words_sent_length[k] += mask[v].sum()
-
-
+       
     def compute_length_analysis(self):
         epsilon = 1e-4
         metrics = {}
