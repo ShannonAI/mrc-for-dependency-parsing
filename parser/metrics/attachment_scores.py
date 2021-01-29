@@ -246,7 +246,7 @@ class AttachmentScores(Metric):
         # self.total_sentences += total_sentences
         self.total_words += total_words
 
-        self.sent_length_error_analysis(words, correct_indices, correct_labels_and_indices)
+        self.sent_length_error_analysis(words, correct_indices, correct_labels_and_indices, mask)
         self.dep_distance_error_analysis(gold_indices, correct_indices, correct_labels_and_indices, mask)
         self.span_length_error_analysis(gold_indices, correct_indices, correct_labels_and_indices, mask)   
 
