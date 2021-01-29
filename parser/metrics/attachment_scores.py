@@ -55,7 +55,7 @@ class AttachmentScores(Metric):
         self.add_state("labeled_correct_dep_dis", default=torch.tensor([.0] * 8).cuda(), dist_reduce_fx="sum")
         self.add_state("total_words_dep_dis", default=torch.tensor([.0] * 8).cuda(), dist_reduce_fx="sum")
 
-        #average subtree span length
+        #average subtree span length: [1, 2), [2, 3), [3, 5), [5, 7), [7, 10), [10, 15)	[15, )
         self.add_state("unlabeled_correct_span_len", default=torch.tensor([.0] * 7).cuda(), dist_reduce_fx="sum")
         self.add_state("labeled_correct_span_len", default=torch.tensor([.0] * 7).cuda(), dist_reduce_fx="sum")
         self.add_state("total_words_span_len", default=torch.tensor([.0] * 7).cuda(), dist_reduce_fx="sum")
