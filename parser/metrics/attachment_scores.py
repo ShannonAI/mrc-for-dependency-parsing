@@ -10,12 +10,10 @@
 
 """
 
-
-from threading import enumerate
 from typing import Optional, List, Any, Callable
 from pytorch_lightning.metrics import Metric
 import torch
-
+from parser.data.tree_utils import build_subtree_spans
 
 class AttachmentScores(Metric):
     """
@@ -40,17 +38,27 @@ class AttachmentScores(Metric):
         ignore_classes: List[int] = None
     ) -> None:
         super(AttachmentScores, self).__init__(compute_on_step, dist_sync_on_step, process_group, dist_sync_fn)
-        self.add_state("labeled_correct", default=torch.tensor(.0), dist_reduce_fx="sum")
-        self.add_state("unlabeled_correct", default=torch.tensor(.0), dist_reduce_fx="sum")
+        self.add_state("labeled_correct", default=torch.tensor(.0).cuda(), dist_reduce_fx="sum")
+        self.add_state("unlabeled_correct", default=torch.tensor(.0).cuda(), dist_reduce_fx="sum")
         # self.add_state("exact_labeled_correct", default=torch.tensor(0), dist_reduce_fx="sum")
         # self.add_state("exact_unlabeled_correct", default=torch.tensor(0), dist_reduce_fx="sum")
-        self.add_state("total_words", default=torch.tensor(.0), dist_reduce_fx="sum")
+        self.add_state("total_words", default=torch.tensor(.0).cuda(), dist_reduce_fx="sum")
         # self.add_state("total_sentences", default=torch.tensor(0), dist_reduce_fx="sum")
         
         #sentence length: [1, 10], [11, 20], [21, 30], [31, 40], [41, 50], [51, ]
-        self.add_state("unlabeled_correct_sent_len", default=torch.tensor([.0, .0, .0, .0, .0, .0]), dist_reduce_fx="sum")
-        self.add_state("labeled_correct_sent_len", default=torch.tensor([.0, .0, .0, .0, .0, .0]), dist_reduce_fx="sum")
-        self.add_state("total_words_sent_len", default=torch.tensor([.0, .0, .0, .0, .0, .0]), dist_reduce_fx="sum")
+        self.add_state("unlabeled_correct_sent_len", default=torch.tensor([.0] * 6).cuda(), dist_reduce_fx="sum")
+        self.add_state("labeled_correct_sent_len", default=torch.tensor([.0] * 6).cuda(), dist_reduce_fx="sum")
+        self.add_state("total_words_sent_len", default=torch.tensor([.0] * 6).cuda(), dist_reduce_fx="sum")
+
+        #dependency distance: 1, 2, 3, 4, 5, 6, 7, >7 
+        self.add_state("unlabeled_correct_dep_dis", default=torch.tensor([.0] * 8).cuda(), dist_reduce_fx="sum")
+        self.add_state("labeled_correct_dep_dis", default=torch.tensor([.0] * 8).cuda(), dist_reduce_fx="sum")
+        self.add_state("total_words_dep_dis", default=torch.tensor([.0] * 8).cuda(), dist_reduce_fx="sum")
+
+        #average subtree span length
+        self.add_state("unlabeled_correct_span_len", default=torch.tensor([.0] * 7).cuda(), dist_reduce_fx="sum")
+        self.add_state("labeled_correct_span_len", default=torch.tensor([.0] * 7).cuda(), dist_reduce_fx="sum")
+        self.add_state("total_words_span_len", default=torch.tensor([.0] * 7).cuda(), dist_reduce_fx="sum")
 
         self._ignore_classes: List[int] = ignore_classes or []
 
@@ -76,7 +84,6 @@ class AttachmentScores(Metric):
         mask : `torch.BoolTensor`, optional (default = `None`).
             A tensor of the same shape as `predicted_indices`.
         """
-
         if mask is None:
             mask = torch.ones_like(predicted_indices).bool()
 
@@ -108,15 +115,97 @@ class AttachmentScores(Metric):
             "LAS": self.labeled_correct / (self.total_words + epsilon)
         }
         return metrics
+    
+    def sent_length_error_analysis(self, words, correct_indices, correct_labels_and_indices, mask):
+        # sentence length
+        nwords = [len(item) for item in words]
+        sent_len_bucket = {0: [], 1:[], 2:[], 3:[], 4:[], 5:[]}
 
-    def update_length_analysis(  # type: ignore
+        for idx, cur_sent_len in enumerate(nwords):
+            if cur_sent_len >= 1 and cur_sent_len <= 10:
+                sent_len_bucket[0].append(idx)
+            elif cur_sent_len >=11 and cur_sent_len <= 20:
+                sent_len_bucket[1].append(idx)
+            elif cur_sent_len >= 21 and cur_sent_len <= 30:
+                sent_len_bucket[2].append(idx)
+            elif cur_sent_len >= 31 and cur_sent_len <= 40:
+                sent_len_bucket[3].append(idx)
+            elif cur_sent_len >= 41 and cur_sent_len <= 50:
+                sent_len_bucket[4].append(idx)
+            else:
+                sent_len_bucket[5].append(idx)
+
+        for k, v in sent_len_bucket.items():
+            self.unlabeled_correct_sent_len[k] += correct_indices[v].sum()
+            self.labeled_correct_sent_len[k] += correct_labels_and_indices[v].sum()
+            self.total_words_sent_len[k] += mask[v].sum()
+
+    def dep_distance_error_analysis(self, gold_indices, correct_indices, correct_labels_and_indices, mask):
+        bsz, timesteps = gold_indices.size()
+        dep_length = torch.abs(gold_indices - torch.range(0, timesteps-1).repeat(bsz, 1).long().cuda()) * mask
+        for batch_idx in range(bsz):
+            sent_dep_bucket = {0: [], 1:[], 2:[], 3:[], 4:[], 5:[], 6:[], 7:[]}
+            for word_idx in range(timesteps):
+                if dep_length[batch_idx][word_idx] == 1:
+                    sent_dep_bucket[0].append(word_idx)
+                elif dep_length[batch_idx][word_idx] == 2:
+                    sent_dep_bucket[1].append(word_idx)
+                elif dep_length[batch_idx][word_idx] == 3:
+                    sent_dep_bucket[2].append(word_idx)
+                elif dep_length[batch_idx][word_idx] == 4:
+                    sent_dep_bucket[3].append(word_idx)
+                elif dep_length[batch_idx][word_idx] == 5:
+                    sent_dep_bucket[4].append(word_idx)
+                elif dep_length[batch_idx][word_idx] == 6:
+                    sent_dep_bucket[5].append(word_idx)
+                elif dep_length[batch_idx][word_idx] == 7:
+                    sent_dep_bucket[6].append(word_idx)
+                elif dep_length[batch_idx][word_idx] >= 8:
+                    sent_dep_bucket[7].append(word_idx)
+
+            for k, v in sent_dep_bucket.items():
+                self.unlabeled_correct_dep_dis[k] += correct_indices[batch_idx][v].sum()
+                self.labeled_correct_dep_dis[k] += correct_labels_and_indices[batch_idx][v].sum()
+                self.total_words_dep_dis[k] += mask[batch_idx][v].sum()   
+
+    def span_length_error_analysis(self, gold_indices, correct_indices, correct_labels_and_indices, mask):
+        bsz, timestep = gold_indices.size()
+        for batch_idx in range(bsz):
+            subtree_span = build_subtree_spans(gold_indices[batch_idx])
+            subtree_span_len_bucket = {0:[], 1:[], 2:[], 3:[], 4:[], 5:[], 6:[]}
+            for word_idx in range(timestep): 
+                parent_index = gold_indices[batch_idx][word_idx]
+                child_subtree_span_len = subtree_span[word_idx][1] - subtree_span[word_idx][0] + 1
+                parent_subtree_span_len = subtree_span[parent_index][1] - subtree_span[parent_index][0] + 1
+                average_subtree_span_len =  (parent_subtree_span_len + child_subtree_span_len) / 2.0
+                if average_subtree_span_len >= 1 and average_subtree_span_len < 2:
+                    subtree_span_len_bucket[0].append(word_idx)
+                elif average_subtree_span_len >= 2 and average_subtree_span_len < 3:
+                    subtree_span_len_bucket[1].append(word_idx)
+                elif average_subtree_span_len >= 3 and average_subtree_span_len < 5:
+                    subtree_span_len_bucket[2].append(word_idx)
+                elif average_subtree_span_len >= 5 and average_subtree_span_len < 7:
+                    subtree_span_len_bucket[3].append(word_idx)
+                elif average_subtree_span_len >= 7 and average_subtree_span_len < 10:
+                    subtree_span_len_bucket[4].append(word_idx)
+                elif average_subtree_span_len >= 10 and average_subtree_span_len < 15:
+                    subtree_span_len_bucket[5].append(word_idx)
+                elif average_subtree_span_len >= 15:
+                    subtree_span_len_bucket[6].append(word_idx)
+
+            for k, v in subtree_span_len_bucket.items():
+                self.unlabeled_correct_span_len[k] += correct_indices[batch_idx][v].sum()
+                self.labeled_correct_span_len[k] += correct_labels_and_indices[batch_idx][v].sum()
+                self.total_words_span_len[k] += mask[batch_idx][v].sum()   
+         
+    
+    def update_error_analysis(  # type: ignore
         self,
         predicted_indices: torch.Tensor,
         predicted_labels: torch.Tensor,
         gold_indices: torch.Tensor,
         gold_labels: torch.Tensor,
-        nwords: List,
-        #subspans: List, # list of [[(word_idx, start, end)]]
+        words: List,
         mask: Optional[torch.BoolTensor] = None,
     ):
         """
@@ -141,7 +230,7 @@ class AttachmentScores(Metric):
         for label in self._ignore_classes:
             label_mask = gold_labels.eq(label)
             mask = mask & ~label_mask
-
+        
         correct_indices = predicted_indices.eq(gold_indices).long() * mask
         # unlabeled_exact_match = (correct_indices + ~mask).prod(dim=-1)
         correct_labels = predicted_labels.eq(gold_labels).long() * mask
@@ -157,41 +246,23 @@ class AttachmentScores(Metric):
         # self.total_sentences += total_sentences
         self.total_words += total_words
 
-        # sentence length
-        cur_sent_len = len(nwords) - 1
-        if cur_sent_len >= 1 and cur_sent_len <= 10:
-            self.unlabeled_correct_sent_len[0] += correct_indices.sum()
-            self.labeled_correct_sent_len[0] += correct_labels_and_indices.sum()
-            self.total_words_sent_len[0] += mask.sum()
-        elif cur_sent_len >=11 and cur_sent_len <= 20:
-            self.unlabeled_correct_sent_len[1] += correct_indices.sum()
-            self.labeled_correct_sent_len[1] += correct_labels_and_indices.sum()
-            self.total_words_sent_len[1] += mask.sum()
-        elif cur_sent_len >= 21 and cur_sent_len <= 30:
-            self.unlabeled_correct_sent_len[2] += correct_indices.sum()
-            self.labeled_correct_sent_len[2] += correct_labels_and_indices.sum()
-            self.total_words_sent_len[2] += mask.sum()
-        elif cur_sent_len >= 31 and cur_sent_len <= 40:
-            self.unlabeled_correct_sent_len[3] += correct_indices.sum()
-            self.labeled_correct_sent_len[3] += correct_labels_and_indices.sum()
-            self.total_words_sent_len[3] += mask.sum()
-        elif cur_sent_len >= 41 and cur_sent_len <= 50:
-            self.unlabeled_correct_sent_len[4] += correct_indices.sum()
-            self.labeled_correct_sent_len[4] += correct_labels_and_indices.sum()
-            self.total_words_sent_len[4] += mask.sum()
-        else:
-            self.unlabeled_correct_sent_len[5] += correct_indices.sum()
-            self.labeled_correct_sent_len[5] += correct_labels_and_indices.sum()
-            self.total_words_sent_len[5] += mask.sum()
-        
-       
-    def compute_length_analysis(self):
+        self.sent_length_error_analysis(words, correct_indices, correct_labels_and_indices)
+        self.dep_distance_error_analysis(gold_indices, correct_indices, correct_labels_and_indices, mask)
+        self.span_length_error_analysis(gold_indices, correct_indices, correct_labels_and_indices, mask)   
+
+    def compute_error_analysis(self):
         epsilon = 1e-4
         metrics = {}
         for idx, v in {0: 1, 1: 11, 2: 21, 3: 31, 4: 41, 5: 51}.items():
-            metrics["UAS_" + str(v)] = self.unlabeled_correct_sent_len[idx] / (self.total_words_sent_len[idx] + epsilon)
-            metrics["LAS_" + str(v)] = self.labeled_correct_sent_len[idx] / (self.total_words_sent_len[idx] + epsilon) 
+            metrics["UAS_Sent_Len" + str(v)] = self.unlabeled_correct_sent_len[idx] / (self.total_words_sent_len[idx] + epsilon)
+            metrics["LAS_Sent_Len" + str(v)] = self.labeled_correct_sent_len[idx] / (self.total_words_sent_len[idx] + epsilon) 
 
-        metrics["UAS"] = self.unlabeled_correct / (self.total_words + epsilon)
-        metrics["LAS"] = self.labeled_correct / (self.total_words + epsilon)
+        for idx in range(8):
+            metrics["UAS_Dep_Dis" + str(idx + 1)] = self.unlabeled_correct_dep_dis[idx] / (self.total_words_dep_dis[idx] + epsilon)
+            metrics["LAS_Dep_Dis" + str(idx + 1)] = self.labeled_correct_dep_dis[idx] / (self.total_words_dep_dis[idx] + epsilon) 
+            
+        for idx in range(7):
+            metrics["UAS_Span_Len" + str(idx + 1)] = self.unlabeled_correct_span_len[idx] / (self.total_words_span_len[idx] + epsilon)
+            metrics["LAS_Span_Len" + str(idx + 1)] = self.labeled_correct_span_len[idx] / (self.total_words_span_len[idx] + epsilon) 
+
         return metrics

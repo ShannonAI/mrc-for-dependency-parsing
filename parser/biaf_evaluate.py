@@ -18,14 +18,13 @@ from parser.biaf_trainer import BiafDependency
 def evaluate(ckpt, hparams_file):
     """main"""
 
-    trainer = Trainer(gpus=[1,], distributed_backend="ddp")
+    trainer = Trainer(gpus=[0,], distributed_backend="ddp")
 
     model = BiafDependency.load_from_checkpoint(
         checkpoint_path=ckpt,
         hparams_file=hparams_file,
         map_location=None,
         batch_size=32,
-        max_length=128,
         workers=0,
         group_sample=False,
         # if you would like to evaluate on new dataset, defaults to origin test loader configured in training
@@ -39,6 +38,6 @@ def evaluate(ckpt, hparams_file):
 
 if __name__ == '__main__':
     # ptb
-    HPARAMS = "/data/yuxian/train_logs/dependency/ptb/20210102/lr_1e-3_adam0.999/lightning_logs/version_1/hparams.yaml"
-    CHECKPOINT = "/data/yuxian/train_logs/dependency/ptb/20210102/lr_1e-3_adam0.999/epoch=46.ckpt"
+    HPARAMS = "/home/ganleilei/train_logs/dependency/ptb/biaf/20210128/finetune/roberta_lr8e-6_drop0.3_layer0_warmup300_newinit_tmap/lightning_logs/version_1/hparams.yaml"
+    CHECKPOINT = "/home/ganleilei/train_logs/dependency/ptb/biaf/20210128/finetune/roberta_lr8e-6_drop0.3_layer0_warmup300_newinit_tmap/epoch=16.ckpt"
     evaluate(ckpt=CHECKPOINT, hparams_file=HPARAMS)

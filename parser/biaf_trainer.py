@@ -38,7 +38,7 @@ class BiafDependency(pl.LightningModule):
             
         # compute other fields according to args
         train_dataset = DependencyDataset(
-            file_path=os.path.join(args.data_dir, f"{args.data_prefix}train.{args.data_format}"),
+            file_path=os.path.join(args.data_dir, f"train.{args.data_format}"),
             bert=args.bert_dir
         )
         # save these information to args to convene evaluation.
@@ -115,6 +115,7 @@ class BiafDependency(pl.LightningModule):
         eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
 
         metric = getattr(self, f"{phase}_stat")
+        
         metric.update(
             predicted_heads[:, 1:],  # ignore parent of root
             predicted_head_tags[:, 1:],
@@ -122,7 +123,15 @@ class BiafDependency(pl.LightningModule):
             dep_tags,
             eval_mask,
         )
-
+        
+        metric.update_error_analysis(
+            predicted_heads[:, 1:],  # ignore parent of root
+            predicted_head_tags[:, 1:],
+            dep_idxs,
+            dep_tags,
+            meta_data["words"],
+            eval_mask,
+        )
         self.log(f'{phase}_loss', loss)
         return loss
 
@@ -139,6 +148,7 @@ class BiafDependency(pl.LightningModule):
         metric_name = f"{phase}_stat"
         metric = getattr(self, metric_name)
         metrics = metric.compute()
+        metrics = metric.compute_error_analysis()
         for sub_metric, metric_value in metrics.items():
             self.log(f"{phase}_{sub_metric}", metric_value)
 
@@ -215,7 +225,7 @@ class BiafDependency(pl.LightningModule):
         return new_mask
 
     def get_dataloader(self, split="train", shuffle=True):
-        dataset = DependencyDataset(file_path=os.path.join(self.args.data_dir, f"{self.args.data_prefix}{split}.{self.args.data_format}"),
+        dataset = DependencyDataset(file_path=os.path.join(self.args.data_dir, f"{split}.{self.args.data_format}"),
                                     pos_tags=getattr(self.args, "pos_tags", None),
                                     dep_tags=getattr(self.args, "dep_tags", None),
                                     bert=self.args.bert_dir)
