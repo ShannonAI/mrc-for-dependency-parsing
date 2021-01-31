@@ -274,7 +274,7 @@ else:
 # for k in [25, 16, 9]:
 for k in [topk]:
     # for alpha in [0.1, 0.2, 0.5, 1.0, 2.0, 5.0]:
-    for alpha in [0.5, 1.0, 2.0]:
+    for alpha in [0.5]:
         logger.info(f"Decoding final dependency predictions according to top{k} "
                     f"subtree-scores and subtree-parent-scores using alpha {alpha}")
         metric = AttachmentScores()
@@ -320,27 +320,25 @@ for k in [topk]:
                     pred_labels[child] = tag_idx
                 pred_heads = pred_heads[1:]  # remove root
                 pred_labels = pred_labels[1:]
-            '''
+            
+            mask_for_eval = query_model._get_mask_for_eval(mask=torch.BoolTensor([True] * len(gold_labels)), pos_tags=ann_info.pos_tags[: len(gold_labels)])
+
             metric.update(
                 torch.LongTensor(pred_heads),
                 torch.LongTensor(pred_labels),
                 torch.LongTensor(gold_heads),
                 torch.LongTensor(gold_labels),
-                query_model._get_mask_for_eval(
-                    mask=torch.BoolTensor([True] * len(gold_labels)),
-                    pos_tags=ann_info.pos_tags[: len(gold_labels)]
-                )
+                mask_for_eval 
             )
-            '''
-            metric.update_length_analysis(
-                torch.LongTensor(pred_heads),
-                torch.LongTensor(pred_labels),
-                torch.LongTensor(gold_heads),
-                torch.LongTensor(gold_labels),
-                ann_info.words,
-                query_model._get_mask_for_eval(
-                    mask=torch.BoolTensor([True] * len(gold_labels)),
-                    pos_tags=ann_info.pos_tags[: len(gold_labels)]
-                )
-            )
-        print(metric.compute_length_analysis())
+
+            metric.update_error_analysis(
+                        torch.LongTensor(pred_heads).unsqueeze(0).cuda(),
+                        torch.LongTensor(pred_labels).unsqueeze(0).cuda(),
+                        torch.LongTensor(gold_heads).unsqueeze(0).cuda(),
+                        torch.LongTensor(gold_labels).unsqueeze(0).cuda(),
+                        [ann_info.words[1:]],
+                        mask_for_eval.unsqueeze(0).cuda()
+                    )
+
+        print(metric.compute_error_analysis())
+        print(metric.compute())

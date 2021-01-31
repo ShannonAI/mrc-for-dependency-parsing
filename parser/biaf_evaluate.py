@@ -38,6 +38,6 @@ def evaluate(ckpt, hparams_file):
 
 if __name__ == '__main__':
     # ptb
-    HPARAMS = "/home/ganleilei/train_logs/dependency/ptb/biaf/20210128/finetune/roberta_lr8e-6_drop0.3_layer0_warmup300_newinit_tmap/lightning_logs/version_1/hparams.yaml"
-    CHECKPOINT = "/home/ganleilei/train_logs/dependency/ptb/biaf/20210128/finetune/roberta_lr8e-6_drop0.3_layer0_warmup300_newinit_tmap/epoch=16.ckpt"
+    HPARAMS = "/home/ganleilei/train_logs/dependency/ptb/biaf/20210114/finetune/roberta_lr8e-6_drop0.3_layer0_warmup300_newinit/lightning_logs/version_1/hparams.yaml"
+    CHECKPOINT = "/home/ganleilei/train_logs/dependency/ptb/biaf/20210114/finetune/roberta_lr8e-6_drop0.3_layer0_warmup300_newinit/epoch=7.ckpt"
     evaluate(ckpt=CHECKPOINT, hparams_file=HPARAMS)
