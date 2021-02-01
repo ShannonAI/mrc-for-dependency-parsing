@@ -274,7 +274,7 @@ else:
 # for k in [25, 16, 9]:
 for k in [topk]:
     # for alpha in [0.1, 0.2, 0.5, 1.0, 2.0, 5.0]:
-    for alpha in [0.5]:
+    for alpha in [0.5, 1.0, 2.0]:
         logger.info(f"Decoding final dependency predictions according to top{k} "
                     f"subtree-scores and subtree-parent-scores using alpha {alpha}")
         metric = AttachmentScores()
@@ -331,14 +331,4 @@ for k in [topk]:
                 mask_for_eval 
             )
 
-            metric.update_error_analysis(
-                        torch.LongTensor(pred_heads).unsqueeze(0).cuda(),
-                        torch.LongTensor(pred_labels).unsqueeze(0).cuda(),
-                        torch.LongTensor(gold_heads).unsqueeze(0).cuda(),
-                        torch.LongTensor(gold_labels).unsqueeze(0).cuda(),
-                        [ann_info.words[1:]],
-                        mask_for_eval.unsqueeze(0).cuda()
-                    )
-
-        print(metric.compute_error_analysis())
         print(metric.compute())
