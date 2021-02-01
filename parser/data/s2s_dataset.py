@@ -35,8 +35,9 @@ class S2SDataset(BaseDataset):
         pos_tags: if specified, directly use it instead of counting POS tags from file
         dep_tags: if specified, directly use it instead of counting dependency tags from file
         bert_name: "roberta" or "bert". if None, we guess type by finding "roberta" in bert path.
-        max_length: max length in a sample, because bert has a maximum length of 512. if one sample's
+        max_length: max word pieces in a sample, because bert has a maximum length of 512. if one sample's
             length after tokenization is larger than max_length, we randomly choose another sample
+        max_words: max words in a sample.
     """
 
     SEP_POS = "sep_pos"
@@ -51,9 +52,10 @@ class S2SDataset(BaseDataset):
         pos_tags: List[str] = None,
         dep_tags: List[str] = None,
         bert_name: str = None,
-        max_length: int = 512
+        max_length: int = 512,
+        max_words: int = 0
     ) -> None:
-        super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags)
+        super().__init__(file_path, bert, use_language_specific_pos, pos_tags, dep_tags, max_words)
         self.max_length = max_length
         self.subtree_spans = [build_subtree_spans(d[3]) for d in self.data]
 

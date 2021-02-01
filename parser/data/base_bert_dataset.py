@@ -60,10 +60,15 @@ class BaseDataset(Dataset):
             provided in the conllu format.
         pos_tags: if specified, directly use it instead of counting POS tags from file
         dep_tags: if specified, directly use it instead of counting dependency tags from file
+        max_words: integer, defaults to 0. if specified, only load samples whose number of words is less than max_words
 
     """
     # punctuation pos tags that may be ignored when evaluating UAS/LAS
-    POS_TO_IGNORE = {"`", "''", ":", ",", ".", "PU", "PUNCT", "SYM"}
+    POS_TO_IGNORE = {
+        "``", "''", ":", ",", ".",  # PTB
+        "PU",  # CTB
+        "PUNCT",  "SYM"  # UD
+    }
 
     # group_file suffix name
     group_file_suffix = ""
@@ -75,6 +80,7 @@ class BaseDataset(Dataset):
         use_language_specific_pos: bool = False,
         pos_tags: List[str] = None,
         dep_tags: List[str] = None,
+        max_words: int = 0
     ) -> None:
         super().__init__()
         self.use_language_specific_pos = use_language_specific_pos
@@ -96,6 +102,9 @@ class BaseDataset(Dataset):
                         cleaned_words[-1] = cleaned_words[-1] + "n"
                         word = "'t"
                     cleaned_words.append(word)
+
+                if 0 < max_words < len(cleaned_words):
+                    continue
 
                 if self.use_language_specific_pos:
                     sample_pos_tags = [x["xpostag"] for x in annotation]
