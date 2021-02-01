@@ -13,7 +13,6 @@
 from typing import Optional, List, Any, Callable
 from pytorch_lightning.metrics import Metric
 import torch
-from parser.data.tree_utils import build_subtree_spans
 
 class AttachmentScores(Metric):
     """
@@ -45,21 +44,6 @@ class AttachmentScores(Metric):
         self.add_state("total_words", default=torch.tensor(.0).cuda(), dist_reduce_fx="sum")
         # self.add_state("total_sentences", default=torch.tensor(0), dist_reduce_fx="sum")
         
-        #sentence length: [1, 10], [11, 20], [21, 30], [31, 40], [41, 50], [51, ]
-        self.add_state("unlabeled_correct_sent_len", default=torch.tensor([.0] * 6).cuda(), dist_reduce_fx="sum")
-        self.add_state("labeled_correct_sent_len", default=torch.tensor([.0] * 6).cuda(), dist_reduce_fx="sum")
-        self.add_state("total_words_sent_len", default=torch.tensor([.0] * 6).cuda(), dist_reduce_fx="sum")
-
-        #dependency distance: 1, 2, 3, 4, 5, 6, 7, >7 
-        self.add_state("unlabeled_correct_dep_dis", default=torch.tensor([.0] * 8).cuda(), dist_reduce_fx="sum")
-        self.add_state("labeled_correct_dep_dis", default=torch.tensor([.0] * 8).cuda(), dist_reduce_fx="sum")
-        self.add_state("total_words_dep_dis", default=torch.tensor([.0] * 8).cuda(), dist_reduce_fx="sum")
-
-        #average subtree span length: [1, 2), [2, 3), [3, 5), [5, 7), [7, 10), [10, 15)	[15, )
-        self.add_state("unlabeled_correct_span_len", default=torch.tensor([.0] * 7).cuda(), dist_reduce_fx="sum")
-        self.add_state("labeled_correct_span_len", default=torch.tensor([.0] * 7).cuda(), dist_reduce_fx="sum")
-        self.add_state("total_words_span_len", default=torch.tensor([.0] * 7).cuda(), dist_reduce_fx="sum")
-
         self._ignore_classes: List[int] = ignore_classes or []
 
     def update(  # type: ignore
