@@ -37,11 +37,11 @@ class AttachmentScores(Metric):
         ignore_classes: List[int] = None
     ) -> None:
         super(AttachmentScores, self).__init__(compute_on_step, dist_sync_on_step, process_group, dist_sync_fn)
-        self.add_state("labeled_correct", default=torch.tensor(.0).cuda(), dist_reduce_fx="sum")
-        self.add_state("unlabeled_correct", default=torch.tensor(.0).cuda(), dist_reduce_fx="sum")
+        self.add_state("labeled_correct", default=torch.tensor(.0), dist_reduce_fx="sum")
+        self.add_state("unlabeled_correct", default=torch.tensor(.0), dist_reduce_fx="sum")
         # self.add_state("exact_labeled_correct", default=torch.tensor(0), dist_reduce_fx="sum")
         # self.add_state("exact_unlabeled_correct", default=torch.tensor(0), dist_reduce_fx="sum")
-        self.add_state("total_words", default=torch.tensor(.0).cuda(), dist_reduce_fx="sum")
+        self.add_state("total_words", default=torch.tensor(.0), dist_reduce_fx="sum")
         # self.add_state("total_sentences", default=torch.tensor(0), dist_reduce_fx="sum")
         
         self._ignore_classes: List[int] = ignore_classes or []
