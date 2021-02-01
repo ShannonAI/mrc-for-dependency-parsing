@@ -116,7 +116,6 @@ class BiafDependency(pl.LightningModule):
 
         metric = getattr(self, f"{phase}_stat")
 
-        '''
         metric.update(
             predicted_heads[:, 1:],  # ignore parent of root
             predicted_head_tags[:, 1:],
@@ -124,16 +123,7 @@ class BiafDependency(pl.LightningModule):
             dep_tags,
             eval_mask,
         )
-        '''
-
-        metric.update_error_analysis(
-            predicted_heads[:, 1:],  # ignore parent of root
-            predicted_head_tags[:, 1:],
-            dep_idxs,
-            dep_tags,
-            meta_data["words"],
-            eval_mask,
-        )
+        
         self.log(f'{phase}_loss', loss)
         return loss
 
@@ -149,13 +139,9 @@ class BiafDependency(pl.LightningModule):
     def log_on_epoch_end(self, phase="train"):
         metric_name = f"{phase}_stat"
         metric = getattr(self, metric_name)
-        # metrics = metric.compute()
-        metrics_error_analysis = metric.compute_error_analysis()
-        '''
+        metrics = metric.compute()
+
         for sub_metric, metric_value in metrics.items():
-            self.log(f"{phase}_{sub_metric}", metric_value)
-        '''
-        for sub_metric, metric_value in metrics_error_analysis.items():
             self.log(f"{phase}_{sub_metric}", metric_value)
 
     def training_epoch_end(self, outputs):
