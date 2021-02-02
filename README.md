@@ -15,7 +15,7 @@ refer to [pytorch-lightning documentation.](https://pytorch-lightning.readthedoc
 ## Dataset
 We follow [this repo](https://github.com/hankcs/TreebankPreprocessing) for PTB/CTB data preprocessing.
 
-We follow [<Stack-Pointer Networks for Dependency Parsing>](https://arxiv.org/abs/1805.01087) to preprocess data in UD dataset.
+We follow [Ma et al. (2018)](https://arxiv.org/abs/1805.01087) to preprocess data in UD dataset.
 
 ## Models
 For PTB, we use [RoBerTa-Large](https://huggingface.co/roberta-large)
@@ -50,4 +50,3 @@ parser/s2s_evaluate_dp.py \
 --s2s_hparams <your best s2s query model ckpt> \
 --topk <use topk spans for evaluating>
 ```
-
