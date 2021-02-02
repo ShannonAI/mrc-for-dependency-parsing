@@ -14,7 +14,8 @@
 from typing import List, Dict
 
 import torch
-
+import warnings
+from random import randint
 from parser.data.base_bert_dataset import BaseDataset
 from parser.utils.logger import get_logger
 import warnings
@@ -82,7 +83,7 @@ class DependencyDataset(BaseDataset):
         pos_tag_idxs = [self.pos_tag_2idx[p] for p in pos_tags]
 
         fields["dp_idxs"] = torch.LongTensor(dp_heads)
-        fields["dp_tags"] = torch.LongTensor([self.dep_tag_2idx[t] for t in dp_tags])
+        fields["dp_tags"] = torch.LongTensor([self.dep_tag_2idx.get(t, 0) for t in dp_tags])
 
         fields["pos_tags"] = torch.LongTensor(pos_tag_idxs)
         fields["meta_data"] = {

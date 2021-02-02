@@ -21,7 +21,7 @@ from allennlp.nn.util import (
 from allennlp.nn.util import get_range_vector
 from overrides import overrides
 from torch import nn
-from transformers import BertModel, BertPreTrainedModel, RobertaModel
+from transformers import BertModel, BertPreTrainedModel, RobertaModel, AutoModel
 from transformers.modeling_bert import BertEncoder
 
 from parser.models.biaffine_dependency_config import BertDependencyConfig, RobertaDependencyConfig 
@@ -49,8 +49,8 @@ class BiaffineDependencyParser(nn.Module):
         if config.pos_dim > 0:
             self.pos_embedding = nn.Embedding(num_pos_labels, config.pos_dim)
             nn.init.xavier_uniform_(self.pos_embedding.weight)
-            if config.additional_layer_type != "lstm" and config.pos_dim+config.hidden_size != hidden_size:
-                self.fuse_layer = nn.Linear(config.pos_dim+config.hidden_size, hidden_size)
+            if config.additional_layer_type != "lstm" and config.pos_dim+config.bert_config.hidden_size != hidden_size:
+                self.fuse_layer = nn.Linear(config.pos_dim+config.bert_config.hidden_size, hidden_size)
                 nn.init.xavier_uniform_(self.fuse_layer.weight)
                 self.fuse_layer.bias.data.zero_()
             else:
@@ -58,14 +58,11 @@ class BiaffineDependencyParser(nn.Module):
         else:
             self.pos_embedding = None
             
-        if isinstance(config, BertDependencyConfig):
-            self.bert = BertModel.from_pretrained(bert_dir, config=self.config)
-        elif isinstance(config, RobertaDependencyConfig):
-            self.bert = RobertaModel.from_pretrained(bert_dir, config=self.config)
+        self.bert = AutoModel.from_pretrained(pretrained_model_name_or_path=bert_dir)
 
         if config.additional_layer > 0:
             if config.additional_layer_type == "transformer":
-                new_config = deepcopy(config)
+                new_config = deepcopy(config.bert_config)
                 new_config.hidden_size = hidden_size
                 new_config.num_hidden_layers = config.additional_layer
                 new_config.hidden_dropout_prob = config.biaf_dropout
@@ -76,7 +73,7 @@ class BiaffineDependencyParser(nn.Module):
             else:
                 assert hidden_size % 2 == 0, "Bi-LSTM need an even hidden_size"
                 self.additional_encoder = StackedBidirectionalLstmSeq2SeqEncoder(
-                    input_size=config.pos_dim+config.hidden_size,
+                    input_size=config.pos_dim+config.bert_config.hidden_size,
                     hidden_size=hidden_size//2, num_layers=config.additional_layer,
                     recurrent_dropout_probability=config.biaf_dropout, use_highway=True
                 )
@@ -113,7 +110,7 @@ class BiaffineDependencyParser(nn.Module):
         if isinstance(module, (nn.Linear, nn.Embedding)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
+            module.weight.data.normal_(mean=0.0, std=self.config.bert_config.initializer_range)
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)

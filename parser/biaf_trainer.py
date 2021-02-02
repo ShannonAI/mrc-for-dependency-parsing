@@ -17,6 +17,7 @@ import torch
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, early_stopping
 from torch.utils.data import DataLoader
 from transformers import BertConfig, AdamW, RobertaConfig
+from transformers.configuration_auto import AutoConfig
 from parser.data.dependency_reader import DependencyDataset, collate_dependency_data
 from parser.metrics import *
 from parser.models import *
@@ -24,7 +25,7 @@ from parser.callbacks import *
 from parser.utils.get_parser import get_parser
 from torch.utils.data import DistributedSampler, RandomSampler, SequentialSampler
 from parser.data.samplers import GroupedSampler
-from parser.models.biaffine_dependency_config import RobertaDependencyConfig
+from parser.models.biaffine_dependency_config import BiaffineDependencyConfig, RobertaDependencyConfig
 
 class BiafDependency(pl.LightningModule):
     def __init__(self, args):
@@ -50,28 +51,19 @@ class BiafDependency(pl.LightningModule):
         self.save_hyperparameters(args)
         self.args = args
         
-        bert_name = args.bert_name
-        if bert_name == 'roberta-large':
-            bert_config = RobertaConfig.from_pretrained(args.bert_dir)
-            DependencyConfig = RobertaDependencyConfig
-        elif bert_name == 'bert':
-            bert_config = BertConfig.from_pretrained(args.bert_dir)
-            DependencyConfig = BertDependencyConfig
-        else:
-            raise ValueError("Unknown bert name!!")
-
-        self.model_config = DependencyConfig(
+        bert_config = AutoConfig.from_pretrained(args.bert_dir)
+        self.model_config = BiaffineDependencyConfig(
+            bert_config=bert_config,
             pos_tags=args.pos_tags,
             dep_tags=args.dep_tags,
-            pos_dim=args.pos_dim,
-            additional_layer=args.additional_layer,
-            additional_layer_dim=args.additional_layer_dim,
-            additional_layer_type=args.additional_layer_type,
-            arc_representation_dim=args.arc_representation_dim,
             tag_representation_dim=args.tag_representation_dim,
+            arc_representation_dim=args.arc_representation_dim,
+            pos_dim=args.pos_dim,
             biaf_dropout=args.biaf_dropout,
-            **bert_config.__dict__
-        )
+            additional_layer=args.additional_layer,
+            additional_layer_type=args.additional_layer_type,
+            additional_layer_dim=args.additional_layer_dim
+        )        
 
         self.model = BiaffineDependencyParser(args.bert_dir, config=self.model_config)
 
@@ -123,6 +115,7 @@ class BiafDependency(pl.LightningModule):
         eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
 
         metric = getattr(self, f"{phase}_stat")
+
         metric.update(
             predicted_heads[:, 1:],  # ignore parent of root
             predicted_head_tags[:, 1:],
@@ -130,7 +123,7 @@ class BiafDependency(pl.LightningModule):
             dep_tags,
             eval_mask,
         )
-
+        
         self.log(f'{phase}_loss', loss)
         return loss
 
@@ -147,6 +140,7 @@ class BiafDependency(pl.LightningModule):
         metric_name = f"{phase}_stat"
         metric = getattr(self, metric_name)
         metrics = metric.compute()
+
         for sub_metric, metric_value in metrics.items():
             self.log(f"{phase}_{sub_metric}", metric_value)
 
@@ -314,7 +308,7 @@ def main():
         replace_sampler_ddp=False
     )
     trainer.fit(model)
-
+    print("best model path:", trainer.checkpoint_callback.best_model_path)
     trainer.test()
 
 if __name__ == '__main__':

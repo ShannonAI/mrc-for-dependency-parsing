@@ -10,11 +10,9 @@
 
 """
 
-
 from typing import Optional, List, Any, Callable
 from pytorch_lightning.metrics import Metric
 import torch
-
 
 class AttachmentScores(Metric):
     """
@@ -45,7 +43,7 @@ class AttachmentScores(Metric):
         # self.add_state("exact_unlabeled_correct", default=torch.tensor(0), dist_reduce_fx="sum")
         self.add_state("total_words", default=torch.tensor(.0), dist_reduce_fx="sum")
         # self.add_state("total_sentences", default=torch.tensor(0), dist_reduce_fx="sum")
-
+        
         self._ignore_classes: List[int] = ignore_classes or []
 
     def update(  # type: ignore
@@ -70,7 +68,6 @@ class AttachmentScores(Metric):
         mask : `torch.BoolTensor`, optional (default = `None`).
             A tensor of the same shape as `predicted_indices`.
         """
-
         if mask is None:
             mask = torch.ones_like(predicted_indices).bool()
 
@@ -102,4 +99,3 @@ class AttachmentScores(Metric):
             "LAS": self.labeled_correct / (self.total_words + epsilon)
         }
         return metrics
-
