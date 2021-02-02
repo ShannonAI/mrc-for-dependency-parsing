@@ -67,6 +67,7 @@ class MrcS2SQuery(pl.LightningModule):
             additional_layer_type=args.additional_layer_type,
             mrc_dropout=args.mrc_dropout,
             predict_child=args.predict_child,
+            normalize=args.normalize
         )
         self.model = BiaffineDependencyS2SQueryParser(config=self.model_config, bert_dir=args.bert_dir)
 
@@ -91,6 +92,7 @@ class MrcS2SQuery(pl.LightningModule):
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
         parser.add_argument("--pos_dim", type=int, default=0, help="pos tag dimension")
         parser.add_argument("--mrc_dropout", type=float, default=0.0, help="mrc dropout")
+        parser.add_argument("--tag_loss_weight", type=float, default=1.0, help="weight of tag loss")
         parser.add_argument("--bert_dropout", type=float, default=0.1, help="bert dropout")
         parser.add_argument("--additional_layer", type=int, default=0, help="additional encoder layer")
         parser.add_argument("--additional_layer_dim", type=int, default=0, help="additional encoder layer dim")
@@ -104,6 +106,9 @@ class MrcS2SQuery(pl.LightningModule):
                             help="scheduler type")
         parser.add_argument("--final_div_factor", type=float, default=1e4,
                             help="final div factor of linear decay scheduler")
+        parser.add_argument("--normalize", type=str,
+                            choices=["softmax", "sigmoid"], default="softmax",
+                            help="method to normalize parent root/start/end distribution")
         return parser
 
     def forward(self, token_ids, type_ids, offsets, wordpiece_mask, pos_tags,
@@ -146,7 +151,8 @@ class MrcS2SQuery(pl.LightningModule):
                 parent_idxs, parent_tags, parent_starts, parent_ends,
                 child_idxs, child_starts, child_ends
             )
-            loss = parent_arc_nll + parent_tag_nll + parent_start_nll + parent_end_nll + child_loss + child_start_loss + child_end_loss
+            loss = self.args.tag_loss_weight * parent_tag_nll + (parent_arc_nll + parent_start_nll + parent_end_nll +
+                                                                 child_loss + child_start_loss + child_end_loss)
         eval_mask = self._get_mask_for_eval(mask=word_mask, pos_tags=pos_tags)
         bsz = parent_probs.size(0)
         # [bsz]
@@ -284,7 +290,8 @@ class MrcS2SQuery(pl.LightningModule):
             pos_tags=self.args.pos_tags,
             dep_tags=self.args.dep_tags,
             bert=self.args.bert_dir,
-            bert_name=self.args.bert_name
+            bert_name=self.args.bert_name,
+            max_words=self.args.max_words,
         )
         if self.args.num_gpus <= 1:
             sampler = RandomSampler(dataset) if shuffle else SequentialSampler(dataset)

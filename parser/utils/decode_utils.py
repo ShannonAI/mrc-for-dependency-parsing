@@ -124,6 +124,7 @@ class SubTreeStruct:
 class DecodeStruct:
     """
     struct to store dp decoding info
+    todo refactor and clean code
     Args:
         words: origin words
         span_candidates: subtree candidates.
@@ -147,14 +148,12 @@ class DecodeStruct:
             maps each span-candidate(word_idx, span_start, span_end) to its child end probs,
             which is a numpy array of shape [nwords+1], +1 for [root] score.
         span2parent_tags_idxs: subtree-parent tags scores
-            maps each span-candidate(word_idx, span_start, span_end) to its max parent tag scores.
-            tags_idxs is a numpy array of shape [nwords+1], +1 for [root] score.
+            maps each span-candidate(word_idx, span_start, span_end) to its parent tag-idx with highest scores,
+             a numpy array of shape [nwords+1], +1 for [root] score.
         dep_heads: dependency heads
         dep_tags: dependency tags
-        todo:
-            1.add tag decoding
-            2.分数都用idx来存，去掉dict的结构
-            3. 统一变成logits传进来
+        span_start_scores: span_start score by proposal model, shape [seq_len, seq_len]
+        span_end_scores: span_end score by proposal model, shape [seq_len, seq_len]
     """
     def __init__(
         self,
@@ -169,7 +168,9 @@ class DecodeStruct:
         span2parent_tags_idxs: Dict[Tuple[int, int, int], np.array] = None,
         dep_heads: List[int] = None,
         dep_tags: List[str] = None,
-        pos_tags: torch.LongTensor = None
+        pos_tags: torch.LongTensor = None,
+        span_start_scores: np.array = None,
+        span_end_scores: np.array = None
     ):
         self.words = words
         self.span_candidates = span_candidates
@@ -192,6 +193,9 @@ class DecodeStruct:
         self.span_lst = self.parent_arc_score_lst = self.span_root_score_lst = self.parent_tags_idxs_lst = None
         self.parent_start_score_lst = self.parent_end_score_lst = None
         self.child_score_lst = self.child_start_score_lst = self.child_end_score_lst = None
+
+        self.span_start_scores = span_start_scores
+        self.span_end_scores = span_end_scores
 
     def __repr__(self):
         return json.dumps({
@@ -283,9 +287,14 @@ class DecodeStruct:
         """get k'th span_start, span_end for every position"""
         output = []
         for word_idx in range(self.nwords):
+            num_candidates = len(self.span_candidates[word_idx])
+            c = k
+            if c >= num_candidates:
+                warnings.warn(f"argument {k} is larger than candidate num {num_candidates}")
+                c = num_candidates-1
             output.append((
-                self.span_candidates[word_idx][k][0],
-                self.span_candidates[word_idx][k][1],
+                self.span_candidates[word_idx][c][0],
+                self.span_candidates[word_idx][c][1],
             ))
         return output
 
@@ -307,10 +316,11 @@ class DecodeStruct:
 
         return dep_heads, dep_tags
 
-    def mst_decode(self) -> Tuple[List[int], List[int]]:
+    def mst_decode(self, arc_alpha: float = 1.0) -> Tuple[List[int], List[int]]:
         """
         do mst decode:
-        S[i][j] = max_{T1, T2}{Score_span(T1) + Score_span(T2) + Score_link(T1, T2), T1.r==i, T2.r==j}
+        S[i][j] = max_{T1, T2}{Score_span(T1) + Score_span(T2) + arc_alpha * Score_link(T1, T2), T1.r==i, T2.r==j}
+
         """
         if self.span_lst is None:
             self.get_spans_infos()
@@ -338,12 +348,14 @@ class DecodeStruct:
                         s = (
                             self.span_root_score_lst[parent_idx]
                             + self.span_root_score_lst[child_idx]
-                            + math.log(self.parent_arc_score_lst[child_idx][parent_root]+EPS)
-                            + math.log(self.parent_start_score_lst[child_idx][parent_start]+EPS)
-                            + math.log(self.parent_end_score_lst[child_idx][parent_end]+EPS)
-                            + math.log(self.child_score_lst[parent_idx][child_root]+EPS)
-                            + math.log(self.child_start_score_lst[parent_idx][child_start]+EPS)
-                            + math.log(self.child_end_score_lst[parent_idx][child_end]+EPS)
+                            + arc_alpha * (
+                                math.log(self.parent_arc_score_lst[child_idx][parent_root]+EPS)
+                                + math.log(self.parent_start_score_lst[child_idx][parent_start]+EPS)
+                                + math.log(self.parent_end_score_lst[child_idx][parent_end]+EPS)
+                                + math.log(self.child_score_lst[parent_idx][child_root]+EPS)
+                                + math.log(self.child_start_score_lst[parent_idx][child_start]+EPS)
+                                + math.log(self.child_end_score_lst[parent_idx][child_end]+EPS)
+                                )
                              )
                         t = self.parent_tags_idxs_lst[child_idx][parent_root]
                         if s > max_score:

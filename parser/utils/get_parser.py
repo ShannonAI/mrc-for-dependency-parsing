@@ -28,4 +28,6 @@ def get_parser() -> argparse.ArgumentParser:
                         help="warmup steps used for scheduler.")
     parser.add_argument("--group_sample", action="store_true",
                         help="use group sampler, which could accelerate training")
+    parser.add_argument("--max_words", type=int, default=0,
+                        help="max number of words of a sample that used in training.")
     return parser

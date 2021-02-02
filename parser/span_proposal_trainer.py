@@ -31,7 +31,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 class MrcSpanProposal(pl.LightningModule):
-    acc_topk = 5  # evaluate topN acc, for every 1<= N <=k
 
     def __init__(self, args: Union[Dict, argparse.Namespace]):
         super().__init__()
@@ -76,6 +75,8 @@ class MrcSpanProposal(pl.LightningModule):
             for param in self.model.bert.parameters():
                 param.requires_grad = False
 
+        # evaluate topN acc, for every 1<= N <=k
+        self.acc_topk = 5
         self.train_acc = AllTopkAccuracy(self.acc_topk)
         self.val_acc = AllTopkAccuracy(self.acc_topk)
         self.test_acc = AllTopkAccuracy(self.acc_topk)
@@ -287,7 +288,7 @@ def main():
 
     # call backs
     checkpoint_callback = ModelCheckpoint(
-        monitor=f'val_top{MrcSpanProposal.acc_topk}_acc',
+        monitor=f'val_top1_acc',
         dirpath=args.default_root_dir,
         save_top_k=10,
         save_last=True,
