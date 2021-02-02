@@ -18,11 +18,11 @@ We follow [this repo](https://github.com/hankcs/TreebankPreprocessing) for PTB/C
 We follow [Ma et al. (2018)](https://arxiv.org/abs/1805.01087) to preprocess data in UD dataset.
 
 ## Models
-For PTB, we use [RoBerTa-Large](https://huggingface.co/roberta-large)
+For PTB, we use [RoBERTa-Large](https://huggingface.co/roberta-large).
 
-For CTB, we use [RoBERTa-wwm-ext-large](https://huggingface.co/hfl/chinese-roberta-wwm-ext)
+For CTB, we use [RoBERTa-wwm-ext-large](https://huggingface.co/hfl/chinese-roberta-wwm-ext).
 
-For UD, we use [XLM-RoBERTa-large](https://huggingface.co/xlm-roberta-large)
+For UD, we use [XLM-RoBERTa-large](https://huggingface.co/xlm-roberta-large).
 
 ## Reproduction
 ### 1. Deep Biaffine Attention
