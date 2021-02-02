@@ -35,7 +35,7 @@ python parser/s2s_query_trainer.py \
   --lr $LR \
   --gradient_clip_val=1.0 \
   --ignore_punct --predict_child \
-  --max_epochs 10 \
+  --max_epochs 30 \
   --group_sample \
   --scheduler "linear_decay" --warmup_steps $WARMUP --final_div_factor 20
 
