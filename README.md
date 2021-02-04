@@ -1,8 +1,7 @@
-# parser
+# MRC for Dependency Parsing
+
 ## Introduction
-Codes for dependency parsing, including following models:
-1. [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)](https://arxiv.org/abs/1611.01734) .
-1. Span-to-Span MRC Dependency parsing
+This repo contains code for paper [Dependency Parsing as MRC-based Span-Span Prediction](todo link)
 
 ## Results
 Table 1: Results for different model on PTB and CTB.
@@ -284,15 +283,6 @@ For CTB, we use [RoBERTa-wwm-ext-large](https://huggingface.co/hfl/chinese-rober
 For UD, we use [XLM-RoBERTa-large](https://huggingface.co/xlm-roberta-large).
 
 ## Reproduction
-### 1. Deep Biaffine Attention
-#### Train
-See `scripts/biaf/biaf_ptb.sh`
-Note that you should change `MODEL_DIR`, `BERT_DIR` and `OUTPUT_DIR` to your own path.
-#### Evaluate
-See `biaf_evaluate.py`
-Note that you should change `HPARAMS` and `CHECKPOINT` to your own path.
-
-### 2. Span-to-Span MRC
 #### Train
 * proposal model: `scripts/s2s/*/proposal.sh`
 * s2s model: `scripts/s2t/*/s2s.sh`
@@ -309,6 +299,11 @@ parser/s2s_evaluate_dp.py \
 --s2s_hparams <your best s2s query model ckpt> \
 --topk <use topk spans for evaluating>
 ```
+
+#### Related Works
+We re-implement [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)](https://arxiv.org/abs/1611.01734)
+as our baseline. The scripts to reproduce this baseline are in [biaf_README.md](./biaf_README.md)
+
 
 ## Contact
 If you have any issues or questions about this repo, feel free to contact yuxian_meng@shannonai.com.
