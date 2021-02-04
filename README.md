@@ -77,7 +77,7 @@ Table 1: Results for different model on PTB and CTB.
       <td><b>91.69</b></td>
    </tr>
    <tr>
-      <td>Proj</td>
+      <td>Ours-Proj</td>
       <td><b>97.24</b></td>
       <td><b>95.49</b></td>
       <td><b>92.68</b></td>
