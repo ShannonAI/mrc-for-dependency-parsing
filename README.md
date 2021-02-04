@@ -109,7 +109,7 @@ Table 1: Results for different model on PTB and CTB.
 </table>
 
 
-Table 2. LAS for different model on UD. We use ISO 639-1 codes
+Table 2: LAS for different model on UD. We use ISO 639-1 codes
 to represent languages from UD.
 <table border=2>
     <tr>
