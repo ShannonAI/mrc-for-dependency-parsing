@@ -314,4 +314,4 @@ parser/s2s_evaluate_dp.py \
 If you have any issues or questions about this repo, feel free to contact yuxian_meng@shannonai.com.
 
 ## License
-[Apache License 2.0](license_link_here) 
+[Apache License 2.0](https://github.com/ShannonAI/mrc-for-dependency-parsing/blob/main/LICENCE) 
