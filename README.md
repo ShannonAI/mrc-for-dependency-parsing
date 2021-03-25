@@ -275,6 +275,14 @@ We follow [this repo](https://github.com/hankcs/TreebankPreprocessing) for PTB/C
 
 We follow [Ma et al. (2018)](https://arxiv.org/abs/1805.01087) to preprocess data in UD dataset.
 
+#### Preprocessed Data Download
+The preprocessed data for PTB/CTB/UD can be downloaded [here](https://drive.google.com/drive/folders/1M-MBQseL4faa8zDGi3URXwie9yiyJbge?usp=sharing)
+
+Note: some languages(e.g. czech) in UD have more than one dataset. For these languages, we select and merge
+datasets using the same strategy with [Ma et al. (2018)](https://arxiv.org/abs/1805.01087),
+and put them under directory `ud2.2/merge_dataset`
+
+
 ### Pretrained Models Preparation
 For PTB, we use [RoBERTa-Large](https://huggingface.co/roberta-large).
 
