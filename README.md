@@ -322,7 +322,8 @@ If you find this repository useful , please cite the following:
   author={Gan, Leilei and Meng, Yuxian and Kuang, Kun and Sun, Xiaofei and Fan, Chun and Wu, Fei and Li, Jiwei},
   journal={arXiv preprint arXiv:2105.07654},
   year={2021}
-}```
+}
+```
 
 
 ## Contact
