@@ -1,7 +1,16 @@
 # MRC for Dependency Parsing
 
 ## Introduction
-This repo contains code for paper [Dependency Parsing as MRC-based Span-Span Prediction](https://arxiv.org/pdf/2105.07654)
+This repo contains code for paper [Dependency Parsing as MRC-based Span-Span Prediction](https://arxiv.org/pdf/2105.07654).
+
+```tex 
+@article{gan2021dependency,
+  title={Dependency Parsing as MRC-based Span-Span Prediction},
+  author={Gan, Leilei and Meng, Yuxian and Kuang, Kun and Sun, Xiaofei and Fan, Chun and Wu, Fei and Li, Jiwei},
+  journal={arXiv preprint arXiv:2105.07654},
+  year={2021}
+}
+```
 
 ## Results
 Table 1: Results for different model on PTB and CTB.
@@ -312,18 +321,6 @@ parser/s2s_evaluate_dp.py \
 We re-implement [Deep Biaffine Attention for Neural Dependency Parsing (Dozat and Manning, 2016)](https://arxiv.org/abs/1611.01734)
 as our baseline. The scripts to reproduce this baseline are in [biaf_README.md](./biaf_README.md)
 
-## Citation 
-
-If you find this repository useful , please cite the following: 
-
-```tex 
-@article{gan2021dependency,
-  title={Dependency Parsing as MRC-based Span-Span Prediction},
-  author={Gan, Leilei and Meng, Yuxian and Kuang, Kun and Sun, Xiaofei and Fan, Chun and Wu, Fei and Li, Jiwei},
-  journal={arXiv preprint arXiv:2105.07654},
-  year={2021}
-}
-```
 
 
 ## Contact
